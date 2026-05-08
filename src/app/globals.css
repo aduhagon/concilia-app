@@ -1,0 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --grid-line: #e7e5e4;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  background: #fafaf9;
+  color: #1c1917;
+  font-family: 'Inter Tight', system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@layer components {
+  /* Cards */
+  .card {
+    @apply bg-white border border-ink-200 rounded-lg p-5;
+  }
+  .card-tight {
+    @apply bg-white border border-ink-200 rounded-lg p-3;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-sm font-medium transition-all duration-150;
+  }
+  .btn-primary {
+    @apply bg-accent text-white hover:bg-accent-dark;
+  }
+  .btn-secondary {
+    @apply bg-white border border-ink-200 text-ink-800 hover:bg-ink-50;
+  }
+  .btn-ghost {
+    @apply text-ink-700 hover:bg-ink-100;
+  }
+  .btn-danger {
+    @apply text-error hover:bg-red-50;
+  }
+
+  /* Inputs */
+  .input {
+    @apply w-full px-3 py-2 text-sm bg-white border border-ink-200 rounded-md
+           focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent
+           placeholder:text-ink-400;
+  }
+  .input-mono {
+    @apply input font-mono text-xs;
+  }
+  .label {
+    @apply block text-2xs font-medium uppercase tracking-wider text-ink-500 mb-1.5;
+  }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium;
+  }
+  .badge-ok { @apply bg-accent-light text-accent-dark; }
+  .badge-warn { @apply bg-amber-50 text-amber-800; }
+  .badge-error { @apply bg-red-50 text-red-800; }
+  .badge-ink { @apply bg-ink-100 text-ink-700; }
+
+  /* Display heading editorial */
+  .h-display {
+    @apply font-serif text-3xl font-medium tracking-tight text-ink-900;
+  }
+  .h-section {
+    @apply font-serif text-xl font-medium text-ink-900;
+  }
+
+  /* Tabla */
+  .tbl {
+    @apply w-full text-sm border-collapse;
+  }
+  .tbl th {
+    @apply text-left text-2xs font-medium uppercase tracking-wider text-ink-500
+           px-3 py-2 border-b border-ink-200;
+  }
+  .tbl td {
+    @apply px-3 py-2 border-b border-ink-100 align-top;
+  }
+  .tbl tr:hover td {
+    @apply bg-ink-50;
+  }
+
+  /* Numbers */
+  .num {
+    @apply font-mono tabular-nums;
+  }
+}

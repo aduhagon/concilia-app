@@ -111,7 +111,7 @@ export default function MaestroPage() {
 
         const { error } = await supabase.from("equivalencias").upsert(
           { texto_original: texto, tipo_normalizado: tipoFinal, origen, signo, activo: true },
-          { onConflict: "empresa_id,origen,texto_original", ignoreDuplicates: false }
+          { onConflict: "texto_original,origen", ignoreDuplicates: false }
         )
         if (!error) importados++; else omitidos++
       }

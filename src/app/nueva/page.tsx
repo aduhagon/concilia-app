@@ -61,7 +61,7 @@ export default function NuevaConciliacionPage() {
       const { movimientos: mp, no_clasificados: nc2 } = normalizarMovimientos(
         filasContraparte, mapeoP as MapeoColumnas, "contraparte", equivalencias
       )
-      const todos = [...new Set([...nc1, ...nc2])]
+      const todos = Array.from(new Set([...nc1, ...nc2]))
       setNoClasificados(todos)
       if (todos.length > 0) { setPaso("validacion"); return }
       const res = ejecutarConciliacion(mc, mp, parseFloat(saldoInicial) || 0)

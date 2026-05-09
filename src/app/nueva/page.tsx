@@ -6,8 +6,10 @@ import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase-client"
 import { leerExcel, normalizarCompania, normalizarContraparte, exportarResultadoExcel } from "@/lib/excel-parser"
 import { conciliar } from "@/lib/motor-conciliacion"
-import type { PlantillaProveedor, ResultadoConciliacion, MovimientoResultado } from "@/types"
+import type { PlantillaProveedor, ResultadoConciliacion } from "@/types"
 import { Upload, Play, Download, AlertCircle, CheckCircle2, FileSpreadsheet } from "lucide-react"
+import TablaConFiltros from "@/components/TablaConFiltros"
+import ConciliacionContable from "@/components/ConciliacionContable"
 
 type Contraparte = { id: string; nombre: string }
 
@@ -247,13 +249,13 @@ export default function NuevaConciliacionPage() {
           </div>
 
           {tab === "resumen" && <ResumenView r={resultado} />}
-          {tab === "conciliados" && <TablaMovs movs={resultado.movimientos.filter((m) => m.estado === "conciliado")} />}
-          {tab === "dif_cambio" && <TablaMovs movs={resultado.movimientos.filter((m) => m.estado === "conciliado_dif_ars")} />}
-          {tab === "dif_real" && <TablaMovs movs={resultado.movimientos.filter((m) => m.estado === "conciliado_dif_real")} />}
-          {tab === "pend_cmp" && <TablaMovs movs={resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "compania")} />}
-          {tab === "pend_cont" && <TablaMovs movs={resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "contraparte")} />}
-          {tab === "ajustes" && <TablaMovs movs={resultado.movimientos.filter((m) => m.estado === "ajuste_propio")} />}
-          {tab === "no_clas" && <TablaMovs movs={resultado.movimientos.filter((m) => m.estado === "tipo_no_clasificado")} />}
+          {tab === "conciliados" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "conciliado")} />}
+          {tab === "dif_cambio" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "conciliado_dif_ars")} />}
+          {tab === "dif_real" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "conciliado_dif_real")} />}
+          {tab === "pend_cmp" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "compania")} />}
+          {tab === "pend_cont" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "contraparte")} />}
+          {tab === "ajustes" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "ajuste_propio")} />}
+          {tab === "no_clas" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "tipo_no_clasificado")} />}
         </section>
       )}
     </div>
@@ -302,59 +304,64 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
 
 function ResumenView({ r }: { r: ResultadoConciliacion }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div className="card">
-        <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Saldos</div>
-        <div className="space-y-2 text-sm">
-          <Linea label="Compañía" valor={r.resumen.saldo_compania_ars} />
-          <Linea label="Contraparte" valor={r.resumen.saldo_contraparte_ars} />
-          <div className="border-t border-ink-200 pt-2">
-            <Linea label="Diferencia" valor={r.resumen.diferencia_final_ars} highlight />
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="card">
+          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Saldos</div>
+          <div className="space-y-2 text-sm">
+            <Linea label="Compañía" valor={r.resumen.saldo_compania_ars} />
+            <Linea label="Contraparte" valor={r.resumen.saldo_contraparte_ars} />
+            <div className="border-t border-ink-200 pt-2">
+              <Linea label="Diferencia" valor={r.resumen.diferencia_final_ars} highlight />
+            </div>
           </div>
         </div>
-      </div>
-      <div className="card">
-        <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Conciliación</div>
-        <div className="space-y-2 text-sm">
-          <Linea label="Conciliados" valor={r.resumen.conciliados} num={false} ok />
-          <Linea label="Con dif. cambio" valor={r.resumen.conciliados_dif_ars} num={false} />
-          <Linea label="Con dif. real" valor={r.resumen.conciliados_dif_real} num={false} warn={r.resumen.conciliados_dif_real > 0} />
-          <Linea label="Pendientes compañía" valor={r.resumen.pendientes_compania} num={false} warn={r.resumen.pendientes_compania > 0} />
-          <Linea label="Pendientes contraparte" valor={r.resumen.pendientes_contraparte} num={false} warn={r.resumen.pendientes_contraparte > 0} />
-          <Linea label="Ajustes propios" valor={r.resumen.ajustes_propios} num={false} />
+        <div className="card">
+          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Conciliación</div>
+          <div className="space-y-2 text-sm">
+            <Linea label="Conciliados" valor={r.resumen.conciliados} num={false} ok />
+            <Linea label="Con dif. cambio" valor={r.resumen.conciliados_dif_ars} num={false} />
+            <Linea label="Con dif. real" valor={r.resumen.conciliados_dif_real} num={false} warn={r.resumen.conciliados_dif_real > 0} />
+            <Linea label="Pendientes compañía" valor={r.resumen.pendientes_compania} num={false} warn={r.resumen.pendientes_compania > 0} />
+            <Linea label="Pendientes contraparte" valor={r.resumen.pendientes_contraparte} num={false} warn={r.resumen.pendientes_contraparte > 0} />
+            <Linea label="Ajustes propios" valor={r.resumen.ajustes_propios} num={false} />
+          </div>
+        </div>
+        <div className="card">
+          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Sin clasificar</div>
+          {r.resumen.tipos_no_clasificados_compania.length === 0 && r.resumen.tipos_no_clasificados_contraparte.length === 0 ? (
+            <div className="text-sm text-accent flex items-center gap-1">
+              <CheckCircle2 size={14} /> Todos los tipos clasificados
+            </div>
+          ) : (
+            <div className="space-y-2 text-xs">
+              {r.resumen.tipos_no_clasificados_compania.length > 0 && (
+                <div>
+                  <div className="text-ink-500 mb-1">Compañía:</div>
+                  <ul className="space-y-0.5">
+                    {r.resumen.tipos_no_clasificados_compania.map((t) => (
+                      <li key={t} className="font-mono text-amber-800">{t}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {r.resumen.tipos_no_clasificados_contraparte.length > 0 && (
+                <div>
+                  <div className="text-ink-500 mb-1">Contraparte:</div>
+                  <ul className="space-y-0.5">
+                    {r.resumen.tipos_no_clasificados_contraparte.map((t) => (
+                      <li key={t} className="font-mono text-amber-800">{t}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
-      <div className="card">
-        <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Sin clasificar</div>
-        {r.resumen.tipos_no_clasificados_compania.length === 0 && r.resumen.tipos_no_clasificados_contraparte.length === 0 ? (
-          <div className="text-sm text-accent flex items-center gap-1">
-            <CheckCircle2 size={14} /> Todos los tipos clasificados
-          </div>
-        ) : (
-          <div className="space-y-2 text-xs">
-            {r.resumen.tipos_no_clasificados_compania.length > 0 && (
-              <div>
-                <div className="text-ink-500 mb-1">Compañía:</div>
-                <ul className="space-y-0.5">
-                  {r.resumen.tipos_no_clasificados_compania.map((t) => (
-                    <li key={t} className="font-mono text-amber-800">{t}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {r.resumen.tipos_no_clasificados_contraparte.length > 0 && (
-              <div>
-                <div className="text-ink-500 mb-1">Contraparte:</div>
-                <ul className="space-y-0.5">
-                  {r.resumen.tipos_no_clasificados_contraparte.map((t) => (
-                    <li key={t} className="font-mono text-amber-800">{t}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+
+      {/* Conciliación contable a ancho completo */}
+      <ConciliacionContable r={r} />
     </div>
   )
 }
@@ -370,57 +377,6 @@ function Linea({ label, valor, num = true, highlight = false, ok = false, warn =
       } ${ok ? "text-accent" : ""} ${warn ? "text-amber-700" : ""}`}>
         {num ? valor.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : valor}
       </span>
-    </div>
-  )
-}
-
-function TablaMovs({ movs }: { movs: MovimientoResultado[] }) {
-  if (movs.length === 0) {
-    return <div className="text-sm text-ink-400 text-center py-8">Sin movimientos en esta categoría</div>
-  }
-  return (
-    <div className="card-tight overflow-x-auto">
-      <table className="tbl">
-        <thead>
-          <tr>
-            <th>Origen</th>
-            <th>Fecha</th>
-            <th>Tipo</th>
-            <th>Comp.</th>
-            <th>Clave</th>
-            <th className="text-right">ARS</th>
-            <th className="text-right">USD</th>
-            <th>Mon.</th>
-            <th className="text-right">Dif ARS</th>
-          </tr>
-        </thead>
-        <tbody>
-          {movs.slice(0, 200).map((m) => (
-            <tr key={m.id_unico}>
-              <td>
-                <span className={`badge ${m.origen === "compania" ? "badge-ink" : "badge-ok"}`}>
-                  {m.origen === "compania" ? "C" : "X"}
-                </span>
-              </td>
-              <td className="text-xs">{m.fecha?.toISOString().slice(0, 10) ?? ""}</td>
-              <td className="text-xs truncate max-w-[180px]">{m.tipo_original}</td>
-              <td className="font-mono text-2xs truncate max-w-[120px]">{m.comprobante_raw}</td>
-              <td className="font-mono text-2xs text-accent truncate max-w-[120px]">{m.clave_calculada ?? ""}</td>
-              <td className="num text-right text-xs">{m.importe_ars.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</td>
-              <td className="num text-right text-xs">{m.importe_usd.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</td>
-              <td className="text-2xs">{m.moneda ?? ""}</td>
-              <td className={`num text-right text-xs ${m.diferencia_ars && Math.abs(m.diferencia_ars) > 1 ? "text-amber-700" : ""}`}>
-                {m.diferencia_ars?.toLocaleString("es-AR", { minimumFractionDigits: 2 }) ?? ""}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {movs.length > 200 && (
-        <div className="text-xs text-ink-400 text-center py-2 border-t border-ink-100">
-          Mostrando 200 de {movs.length} — descargá el Excel para ver todo
-        </div>
-      )}
     </div>
   )
 }

@@ -150,6 +150,40 @@ export function exportarResultadoExcel(resultado: ResultadoConciliacion): ArrayB
   ]
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumenRows), "Resumen")
 
+  // Solapa 2: Conciliación contable (la fórmula clásica)
+  const movs = resultado.movimientos
+  const pendCont = movs.filter((m) => m.estado === "pendiente" && m.origen === "contraparte")
+  const pendCmp = movs.filter((m) => m.estado === "pendiente" && m.origen === "compania")
+  const totalPendCont = pendCont.reduce((acc, m) => acc + (m.importe_ars || 0), 0)
+  const totalPendCmp = pendCmp.reduce((acc, m) => acc + (m.importe_ars || 0), 0)
+  const saldoEsperado = resultado.resumen.saldo_compania_ars + totalPendCont - totalPendCmp
+  const difFinal = saldoEsperado - resultado.resumen.saldo_contraparte_ars
+
+  // Agrupar por tipo para el desglose
+  const grupCont = agruparPorTipoExport(pendCont)
+  const grupCmp = agruparPorTipoExport(pendCmp)
+
+  const conciliacionRows: { Concepto: string; Cantidad: string | number; "Importe ARS": number | string }[] = []
+  conciliacionRows.push({ Concepto: "Saldo según compañía", Cantidad: "", "Importe ARS": resultado.resumen.saldo_compania_ars })
+  conciliacionRows.push({ Concepto: "", Cantidad: "", "Importe ARS": "" })
+  conciliacionRows.push({ Concepto: "(+) Comprobantes en contraparte no registrados por compañía", Cantidad: pendCont.length, "Importe ARS": totalPendCont })
+  for (const g of grupCont) {
+    conciliacionRows.push({ Concepto: `        └─ ${g.tipo}`, Cantidad: g.cantidad, "Importe ARS": g.total })
+  }
+  conciliacionRows.push({ Concepto: "", Cantidad: "", "Importe ARS": "" })
+  conciliacionRows.push({ Concepto: "(-) Comprobantes en compañía no registrados por contraparte", Cantidad: pendCmp.length, "Importe ARS": -totalPendCmp })
+  for (const g of grupCmp) {
+    conciliacionRows.push({ Concepto: `        └─ ${g.tipo}`, Cantidad: g.cantidad, "Importe ARS": -g.total })
+  }
+  conciliacionRows.push({ Concepto: "", Cantidad: "", "Importe ARS": "" })
+  conciliacionRows.push({ Concepto: "= Saldo conciliado esperado", Cantidad: "", "Importe ARS": saldoEsperado })
+  conciliacionRows.push({ Concepto: "  Saldo informado por contraparte", Cantidad: "", "Importe ARS": resultado.resumen.saldo_contraparte_ars })
+  conciliacionRows.push({ Concepto: "", Cantidad: "", "Importe ARS": "" })
+  conciliacionRows.push({ Concepto: "DIFERENCIA SIN CONCILIAR", Cantidad: "", "Importe ARS": difFinal })
+  conciliacionRows.push({ Concepto: "", Cantidad: "", "Importe ARS": "" })
+  conciliacionRows.push({ Concepto: "Aparte: comprobantes con diferencia de importe real", Cantidad: resultado.resumen.conciliados_dif_real, "Importe ARS": "no se incluye en la fórmula" })
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(conciliacionRows), "Conciliación Contable")
+
   // Solapa 2-7: por estado
   agregarSolapa(wb, resultado.movimientos.filter((m) => m.estado === "conciliado"), "Conciliados")
   agregarSolapa(wb, resultado.movimientos.filter((m) => m.estado === "conciliado_dif_ars"), "Dif Cambio")
@@ -191,4 +225,18 @@ function agregarSolapa(wb: XLSX.WorkBook, movs: MovimientoResultado[], nombre: s
     Descripción: m.descripcion,
   }))
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), nombre)
+}
+
+function agruparPorTipoExport(movs: MovimientoResultado[]): { tipo: string; cantidad: number; total: number }[] {
+  const map = new Map<string, { cantidad: number; total: number }>()
+  for (const m of movs) {
+    const t = m.tipo_original || "(sin tipo)"
+    const e = map.get(t) ?? { cantidad: 0, total: 0 }
+    e.cantidad += 1
+    e.total += m.importe_ars || 0
+    map.set(t, e)
+  }
+  return Array.from(map.entries())
+    .map(([tipo, v]) => ({ tipo, ...v }))
+    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
 }

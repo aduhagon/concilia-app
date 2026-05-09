@@ -52,6 +52,17 @@ export default function NuevaConciliacionPage() {
   const [tab, setTab] = useState<"papel" | "clasificacion" | "ajustes" | "movimientos">("papel")
   const [tabMovs, setTabMovs] = useState<"conciliados" | "dif_cambio" | "dif_real" | "pend_cmp" | "pend_cont" | "ajustes_propios" | "no_clas">("pend_cmp")
 
+  // Última conciliación de este proveedor (para botón "Copiar de mes anterior")
+  type UltimaConc = {
+    periodo_label: string | null
+    saldo_final_compania_ars: number | null
+    saldo_final_compania_usd: number | null
+    saldo_final_contraparte_ars: number | null
+    saldo_final_contraparte_usd: number | null
+    tc_cierre: number | null
+  }
+  const [ultimaConc, setUltimaConc] = useState<UltimaConc | null>(null)
+
   useEffect(() => {
     supabase.from("contrapartes").select("id, nombre").order("nombre").then(({ data }) => {
       setContrapartes((data ?? []) as Contraparte[])
@@ -59,7 +70,11 @@ export default function NuevaConciliacionPage() {
   }, [])
 
   useEffect(() => {
-    if (!contraparteId) { setPlantilla(null); return }
+    if (!contraparteId) {
+      setPlantilla(null)
+      setUltimaConc(null)
+      return
+    }
     supabase.from("plantillas_proveedor").select("*").eq("contraparte_id", contraparteId).single().then(({ data }) => {
       if (data) {
         setPlantilla({
@@ -74,7 +89,32 @@ export default function NuevaConciliacionPage() {
         })
       }
     })
+    // Cargar la última conciliación de este proveedor
+    supabase
+      .from("conciliaciones")
+      .select("periodo_label, saldo_final_compania_ars, saldo_final_compania_usd, saldo_final_contraparte_ars, saldo_final_contraparte_usd, tc_cierre")
+      .eq("contraparte_id", contraparteId)
+      .eq("estado", "finalizada")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        setUltimaConc(data as UltimaConc | null)
+      })
   }, [contraparteId])
+
+  // Botón "Copiar de mes anterior": usa los saldos finales del mes anterior como saldos iniciales del mes nuevo
+  function copiarDeAnterior() {
+    if (!ultimaConc) return
+    setSaldos({
+      ...saldos,
+      inicial_compania_ars: Number(ultimaConc.saldo_final_compania_ars ?? 0),
+      inicial_compania_usd: Number(ultimaConc.saldo_final_compania_usd ?? 0),
+      inicial_contraparte_ars: Number(ultimaConc.saldo_final_contraparte_ars ?? 0),
+      inicial_contraparte_usd: Number(ultimaConc.saldo_final_contraparte_usd ?? 0),
+      tc_cierre: Number(ultimaConc.tc_cierre ?? saldos.tc_cierre),
+    })
+  }
 
   const papel: PapelConciliacion | null = useMemo(() => {
     if (!resultado) return null
@@ -103,7 +143,9 @@ export default function NuevaConciliacionPage() {
   async function guardar() {
     if (!resultado || !papel) return
     const cont = contrapartes.find((c) => c.id === contraparteId)
-    const { error: errSave } = await supabase
+
+    // 1. Insertar la cabecera de la conciliación
+    const { data: nueva, error: errSave } = await supabase
       .from("conciliaciones")
       .insert({
         contraparte_id: contraparteId,
@@ -127,11 +169,46 @@ export default function NuevaConciliacionPage() {
         estado: "finalizada",
         resumen: resultado.resumen,
       })
-    if (errSave) {
-      alert("Error al guardar: " + errSave.message)
+      .select()
+      .single()
+
+    if (errSave || !nueva) {
+      alert("Error al guardar: " + (errSave?.message ?? "desconocido"))
       return
     }
-    alert(`Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""})`)
+
+    // 2. Guardar SOLO los pendientes (cmp + cont) — son los que hacen falta para arrastres
+    //    Los conciliados/dif_cambio/ajustes propios no aportan valor histórico.
+    const pendientes = resultado.movimientos.filter((m) => m.estado === "pendiente")
+
+    if (pendientes.length > 0) {
+      const filas = pendientes.map((m) => ({
+        conciliacion_id: nueva.id,
+        origen: m.origen,
+        fecha: m.fecha?.toISOString().slice(0, 10),
+        tipo_original: m.tipo_original,
+        tipo_normalizado: m.tipo_normalizado,
+        comprobante_raw: m.comprobante_raw,
+        clave_calculada: m.clave_calculada,
+        importe_ars: m.importe_ars,
+        importe_usd: m.importe_usd,
+        moneda: m.moneda,
+        descripcion: m.descripcion,
+        // Guardamos en estado_conciliacion el STATUS clasificado, no "pendiente" plano,
+        // para que en el historial sepamos a qué categoría pertenecía.
+        // Si no hay clasificación, queda como "pendiente".
+        estado_conciliacion: clasificacion[m.id_unico] ?? "pendiente",
+        match_id: null,
+      }))
+
+      const { error: errMovs } = await supabase.from("movimientos").insert(filas)
+      if (errMovs) {
+        alert(`Conciliación guardada pero falló el detalle de pendientes: ${errMovs.message}`)
+        return
+      }
+    }
+
+    alert(`Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""}) — ${pendientes.length} pendientes archivados`)
   }
 
   function descargar() {
@@ -206,6 +283,8 @@ export default function NuevaConciliacionPage() {
             onChange={setSaldos}
             periodoLabel={periodoLabel}
             onPeriodoChange={setPeriodoLabel}
+            onCopiarAnterior={ultimaConc ? copiarDeAnterior : undefined}
+            copiarAnteriorLabel={ultimaConc?.periodo_label ? `Copiar saldos del ${ultimaConc.periodo_label}` : "Copiar de mes anterior"}
           />
         </section>
       )}

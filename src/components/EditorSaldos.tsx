@@ -1,27 +1,38 @@
 "use client"
 
 import type { SaldosBilaterales } from "@/types"
+import { Copy } from "lucide-react"
 
 type Props = {
   saldos: SaldosBilaterales
   onChange: (s: SaldosBilaterales) => void
   periodoLabel: string
   onPeriodoChange: (s: string) => void
+  onCopiarAnterior?: () => void
+  copiarAnteriorLabel?: string
 }
 
-export default function EditorSaldos({ saldos, onChange, periodoLabel, onPeriodoChange }: Props) {
+export default function EditorSaldos({ saldos, onChange, periodoLabel, onPeriodoChange, onCopiarAnterior, copiarAnteriorLabel }: Props) {
   function setNum<K extends keyof SaldosBilaterales>(k: K, v: number) {
     onChange({ ...saldos, [k]: v })
   }
 
   return (
     <div className="card space-y-4">
-      <div>
-        <div className="text-2xs uppercase tracking-wider text-ink-500 mb-1">Período y saldos</div>
-        <div className="font-serif text-base">Saldos del período</div>
-        <p className="text-xs text-ink-500 mt-0.5">
-          Saldos iniciales (cierre del mes anterior) y finales (cierre del mes actual) en ARS y USD para cada lado.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-1">Período y saldos</div>
+          <div className="font-serif text-base">Saldos del período</div>
+          <p className="text-xs text-ink-500 mt-0.5">
+            Saldos iniciales (cierre del mes anterior) y finales (cierre del mes actual) en ARS y USD para cada lado.
+          </p>
+        </div>
+        {onCopiarAnterior && (
+          <button onClick={onCopiarAnterior} className="btn btn-secondary text-xs whitespace-nowrap">
+            <Copy size={12} />
+            {copiarAnteriorLabel ?? "Copiar de mes anterior"}
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

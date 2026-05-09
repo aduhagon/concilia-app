@@ -5,11 +5,12 @@ export const dynamic = "force-dynamic"
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase-client"
 import Link from "next/link"
-import { Clock, FileSpreadsheet } from "lucide-react"
+import { Clock, FileSpreadsheet, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react"
 
 type ConciliacionRow = {
   id: string
   contraparte_id: string
+  periodo_label: string | null
   saldo_final_compania_ars: number | null
   saldo_final_contraparte_ars: number | null
   diferencia_final_ars: number | null
@@ -25,9 +26,9 @@ export default function HistorialPage() {
   useEffect(() => {
     supabase
       .from("conciliaciones")
-      .select("id, contraparte_id, saldo_final_compania_ars, saldo_final_contraparte_ars, diferencia_final_ars, estado, created_at, contrapartes(nombre)")
+      .select("id, contraparte_id, periodo_label, saldo_final_compania_ars, saldo_final_contraparte_ars, diferencia_final_ars, estado, created_at, contrapartes(nombre)")
       .order("created_at", { ascending: false })
-      .limit(50)
+      .limit(100)
       .then(({ data }) => {
         setItems((data ?? []) as unknown as ConciliacionRow[])
         setLoading(false)
@@ -52,24 +53,40 @@ export default function HistorialPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {items.map((c) => (
-            <div key={c.id} className="card-tight flex items-center justify-between">
-              <div>
-                <div className="font-serif text-base">{c.contrapartes?.nombre ?? "—"}</div>
-                <div className="text-2xs text-ink-500 flex items-center gap-1 mt-0.5">
-                  <Clock size={11} /> {new Date(c.created_at).toLocaleString("es-AR")}
+          {items.map((c) => {
+            const ok = c.diferencia_final_ars !== null && Math.abs(c.diferencia_final_ars) < 1
+            return (
+              <Link
+                key={c.id}
+                href={`/conciliaciones/${c.id}`}
+                className="card-tight flex items-center justify-between hover:border-accent hover:bg-ink-50/50 transition-colors group"
+              >
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className={`w-8 h-8 rounded flex items-center justify-center flex-shrink-0 ${ok ? "bg-accent-light text-accent" : "bg-amber-100 text-amber-700"}`}>
+                    {ok ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-serif text-base">
+                      {c.contrapartes?.nombre ?? "—"}
+                      {c.periodo_label && <span className="text-ink-500 font-sans text-sm font-normal"> · {c.periodo_label}</span>}
+                    </div>
+                    <div className="text-2xs text-ink-500 flex items-center gap-1 mt-0.5">
+                      <Clock size={11} /> {new Date(c.created_at).toLocaleString("es-AR")}
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="text-right">
-                <div className="text-2xs text-ink-500">Diferencia</div>
-                <div className={`num text-sm font-medium ${
-                  c.diferencia_final_ars && Math.abs(c.diferencia_final_ars) > 1 ? "text-amber-700" : "text-accent"
-                }`}>
-                  {c.diferencia_final_ars?.toLocaleString("es-AR", { minimumFractionDigits: 2 }) ?? "—"}
+                <div className="text-right flex items-center gap-3">
+                  <div>
+                    <div className="text-2xs text-ink-500">Control de diferencia</div>
+                    <div className={`num text-sm font-medium ${ok ? "text-accent" : "text-amber-700"}`}>
+                      {c.diferencia_final_ars?.toLocaleString("es-AR", { minimumFractionDigits: 2 }) ?? "—"}
+                    </div>
+                  </div>
+                  <ChevronRight size={16} className="text-ink-300 group-hover:text-accent transition-colors" />
                 </div>
-              </div>
-            </div>
-          ))}
+              </Link>
+            )
+          })}
         </div>
       )}
     </div>

@@ -124,14 +124,14 @@ export default function EditarPlantillaPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="px-6 py-6 space-y-8">
       {/* Header */}
       <div className="flex items-end justify-between border-b border-ink-200 pb-6">
         <div>
           <Link href="/plantillas" className="text-2xs uppercase tracking-[0.2em] text-ink-500 hover:text-accent inline-flex items-center gap-1">
             <ArrowLeft size={11} /> Plantillas
           </Link>
-          <h1 className="h-display mt-2">{contraparte.nombre}</h1>
+          <h1 className="h-page mt-2">{contraparte.nombre}</h1>
         </div>
         <button onClick={guardar} disabled={guardando} className="btn btn-primary">
           <Save size={14} /> {guardando ? "Guardando..." : "Guardar plantilla"}
@@ -340,7 +340,7 @@ function ReglaCard({
             value={regla.label}
             onChange={(e) => onChange({ label: e.target.value })}
             onClick={(e) => e.stopPropagation()}
-            className="font-serif text-base bg-transparent flex-1 focus:outline-none focus:bg-ink-50 rounded px-1"
+            className="text-sm font-semibold bg-transparent flex-1 focus:outline-none focus:bg-ink-50 rounded px-1"
             placeholder="Nombre de la regla"
           />
           <span className="badge badge-ink">{regla.metodo_match}</span>

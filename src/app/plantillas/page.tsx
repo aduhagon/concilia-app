@@ -59,11 +59,11 @@ export default function PlantillasPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="px-6 py-6 space-y-8">
       <div className="flex items-end justify-between border-b border-ink-200 pb-6">
         <div>
           <div className="text-2xs uppercase tracking-[0.2em] text-ink-500 mb-2">Plantillas</div>
-          <h1 className="h-display">Plantillas de proveedor</h1>
+          <h1 className="h-page">Plantillas de proveedor</h1>
           <p className="text-ink-600 mt-2 text-sm max-w-xl">
             Cada proveedor tiene su receta: mapeo de columnas, equivalencia de tipos y construcción
             de claves para matchear.
@@ -99,7 +99,7 @@ export default function PlantillasPage() {
       ) : items.length === 0 ? (
         <div className="card text-center py-12">
           <Building2 size={32} className="mx-auto text-ink-300 mb-3" />
-          <div className="font-serif text-lg">Sin proveedores aún</div>
+          <div className="text-base font-semibold">Sin proveedores aún</div>
           <p className="text-sm text-ink-500 mt-1">Agregá el primero usando el formulario de arriba.</p>
         </div>
       ) : (
@@ -115,7 +115,7 @@ export default function PlantillasPage() {
                   <Building2 size={16} />
                 </div>
                 <div>
-                  <div className="font-serif text-base">{item.nombre}</div>
+                  <div className="text-sm font-semibold">{item.nombre}</div>
                   <div className="text-xs text-ink-500">
                     {item.cuit ?? "Sin CUIT"} · {item.plantilla_id ? "Con plantilla" : "Sin plantilla"}
                   </div>

@@ -11,12 +11,15 @@ import type {
   PlantillaProveedor, ResultadoConciliacion,
   SaldosBilaterales, AjusteManual, ClasificacionPendientes, PapelConciliacion,
 } from "@/types"
-import { Upload, Play, Download, AlertCircle, CheckCircle2, FileSpreadsheet } from "lucide-react"
+import { Upload, Play, Download, AlertCircle, CheckCircle2, FileSpreadsheet, Trash2, Save } from "lucide-react"
 import TablaConFiltros from "@/components/TablaConFiltros"
 import EditorSaldos from "@/components/EditorSaldos"
 import EditorAjustes from "@/components/EditorAjustes"
 import ClasificadorPendientes from "@/components/ClasificadorPendientes"
 import PapelConciliacionView from "@/components/PapelConciliacionView"
+import { usePersistedState } from "@/lib/use-persisted-state"
+import { useShortcuts } from "@/lib/use-shortcuts"
+import { useToast } from "@/components/Toast"
 
 type Contraparte = { id: string; nombre: string }
 
@@ -30,24 +33,23 @@ const SALDOS_VACIOS: SaldosBilaterales = {
 
 export default function NuevaConciliacionPage() {
   const [contrapartes, setContrapartes] = useState<Contraparte[]>([])
-  const [contraparteId, setContraparteId] = useState<string>("")
+  const [contraparteId, setContraparteId, clearContraparteId] = usePersistedState<string>("nueva-contraparte-id", "")
+  // Persistir todo lo crítico del usuario
+  const [periodoLabel, setPeriodoLabel, clearPeriodo] = usePersistedState<string>("nueva-periodo", "")
+  const [saldos, setSaldos, clearSaldos] = usePersistedState<SaldosBilaterales>("nueva-saldos", SALDOS_VACIOS)
+  const [clasificacion, setClasificacion, clearClasif] = usePersistedState<ClasificacionPendientes>("nueva-clasif", {})
+  const [ajustes, setAjustes, clearAjustes] = usePersistedState<AjusteManual[]>("nueva-ajustes", [])
+  const [firmadoPor, setFirmadoPor, clearFirma] = usePersistedState<string>("nueva-firma", "")
+  const [aprobadoPor, setAprobadoPor, clearAprob] = usePersistedState<string>("nueva-aprob", "")
+
   const [plantilla, setPlantilla] = useState<PlantillaProveedor | null>(null)
-
-  const [periodoLabel, setPeriodoLabel] = useState("")
-  const [saldos, setSaldos] = useState<SaldosBilaterales>(SALDOS_VACIOS)
-
   const [archivoCmp, setArchivoCmp] = useState<File | null>(null)
   const [archivoCont, setArchivoCont] = useState<File | null>(null)
-
   const [resultado, setResultado] = useState<ResultadoConciliacion | null>(null)
   const [procesando, setProcesando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [clasificacion, setClasificacion] = useState<ClasificacionPendientes>({})
-  const [ajustes, setAjustes] = useState<AjusteManual[]>([])
-
-  const [firmadoPor, setFirmadoPor] = useState("")
-  const [aprobadoPor, setAprobadoPor] = useState("")
+  const toast = useToast()
 
   const [tab, setTab] = useState<"papel" | "clasificacion" | "ajustes" | "movimientos">("papel")
   const [tabMovs, setTabMovs] = useState<"conciliados" | "dif_cambio" | "dif_real" | "pend_cmp" | "pend_cont" | "ajustes_propios" | "no_clas">("pend_cmp")
@@ -203,12 +205,25 @@ export default function NuevaConciliacionPage() {
 
       const { error: errMovs } = await supabase.from("movimientos").insert(filas)
       if (errMovs) {
-        alert(`Conciliación guardada pero falló el detalle de pendientes: ${errMovs.message}`)
+        toast.show(`Guardado parcial: falló el detalle (${errMovs.message})`, "error")
         return
       }
     }
 
-    alert(`Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""}) — ${pendientes.length} pendientes archivados`)
+    toast.show(`✓ Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""}) — ${pendientes.length} pendientes`, "ok")
+    // Limpiar el borrador después de guardar exitoso
+    setTimeout(() => {
+      clearContraparteId()
+      clearPeriodo()
+      clearSaldos()
+      clearClasif()
+      clearAjustes()
+      clearFirma()
+      clearAprob()
+      setArchivoCmp(null)
+      setArchivoCont(null)
+      setResultado(null)
+    }, 500)
   }
 
   function descargar() {
@@ -242,11 +257,54 @@ export default function NuevaConciliacionPage() {
   const sinClasif = pendientes.filter((m) => !clasificacion[m.id_unico]).length
   const contraparteName = contrapartes.find((c) => c.id === contraparteId)?.nombre
 
+  // Limpiar todo el borrador (después de guardar exitosamente o por acción del usuario)
+  function limpiarBorrador() {
+    clearContraparteId()
+    clearPeriodo()
+    clearSaldos()
+    clearClasif()
+    clearAjustes()
+    clearFirma()
+    clearAprob()
+    setArchivoCmp(null)
+    setArchivoCont(null)
+    setResultado(null)
+    toast.show("Borrador limpiado", "info")
+  }
+
+  // Atajos globales (Ctrl+S guardar, ? help)
+  useShortcuts(
+    [
+      {
+        key: "s", ctrl: true, description: "Guardar conciliación",
+        handler: () => {
+          if (resultado && papel) guardar()
+        },
+      },
+    ],
+    !!resultado
+  )
+
+  // Detectar si hay un borrador en progreso (cualquier campo crítico tiene valor)
+  const hayBorrador = !!(periodoLabel || saldos.final_compania_ars !== 0 || saldos.tc_cierre !== 0 || ajustes.length > 0 || Object.keys(clasificacion).length > 0)
+
   return (
-    <div className="space-y-6">
-      <div className="border-b border-ink-200 pb-4">
-        <div className="text-2xs uppercase tracking-[0.2em] text-ink-500 mb-2">Conciliar</div>
-        <h1 className="h-display">Nueva conciliación</h1>
+    <div className="px-6 py-6 space-y-6">
+      <div className="flex items-end justify-between border-b border-ink-200 pb-4">
+        <div>
+          <div className="text-2xs uppercase tracking-[0.2em] text-ink-500 mb-1">Conciliar</div>
+          <h1 className="h-page">Nueva conciliación</h1>
+          {hayBorrador && (
+            <div className="text-2xs text-ok mt-1 flex items-center gap-1">
+              <Save size={11} /> Borrador guardado automáticamente
+            </div>
+          )}
+        </div>
+        {hayBorrador && (
+          <button onClick={limpiarBorrador} className="btn btn-ghost text-danger">
+            <Trash2 size={12} /> Limpiar borrador
+          </button>
+        )}
       </div>
 
       <section className="card">
@@ -303,15 +361,20 @@ export default function NuevaConciliacionPage() {
       )}
 
       {plantilla && !reglasFaltantes && !mapeoIncompleto && (
-        <div className="flex justify-end">
+        <div className="flex justify-center py-2">
           <button
             onClick={ejecutar}
             disabled={!archivoCmp || !archivoCont || procesando}
-            className="btn btn-primary disabled:opacity-50"
+            className="btn btn-primary btn-lg disabled:opacity-50 min-w-[280px]"
           >
-            <Play size={14} />
-            {procesando ? "Procesando..." : "Conciliar"}
+            <Play size={16} />
+            {procesando ? "Procesando..." : "Ejecutar conciliación"}
           </button>
+        </div>
+      )}
+      {plantilla && !reglasFaltantes && !mapeoIncompleto && !archivoCmp && !archivoCont && !procesando && (
+        <div className="text-center text-2xs text-ink-500">
+          Subí los dos archivos (compañía y contraparte) para habilitar la conciliación
         </div>
       )}
 

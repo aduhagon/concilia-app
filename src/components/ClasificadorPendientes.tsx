@@ -1,9 +1,13 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useRef, useEffect } from "react"
 import type { MovimientoResultado, ClasificacionPendientes, StatusPendiente } from "@/types"
 import { STATUS_LABELS } from "@/types"
-import { Search, CheckSquare, Square, Tag } from "lucide-react"
+import { Search, CheckSquare, Square, HelpCircle, Filter, X, Tag, Zap, Calendar } from "lucide-react"
+import { useShortcuts } from "@/lib/use-shortcuts"
+import { formatNum, antiguedad } from "@/lib/format"
+import { useToast } from "@/components/Toast"
+import ShortcutHelp from "@/components/ShortcutHelp"
 
 type Props = {
   pendientes: MovimientoResultado[]
@@ -11,18 +15,33 @@ type Props = {
   onChange: (c: ClasificacionPendientes) => void
 }
 
+// Mapeo de teclas numéricas a status
+const ATAJOS_STATUS_CMP: Record<string, StatusPendiente> = {
+  "1": "posterior_msu",
+  "2": "no_contraparte",
+  "3": "arrastre",
+}
+const ATAJOS_STATUS_CONT: Record<string, StatusPendiente> = {
+  "1": "pendiente_msu",
+  "2": "posterior_contraparte",
+  "3": "arrastre",
+}
+
 const STATUS_COMPANIA: StatusPendiente[] = ["posterior_msu", "no_contraparte", "arrastre"]
 const STATUS_CONTRAPARTE: StatusPendiente[] = ["pendiente_msu", "posterior_contraparte", "arrastre"]
-const STATUS_TODOS: StatusPendiente[] = ["posterior_msu", "pendiente_msu", "posterior_contraparte", "no_contraparte", "arrastre"]
 
 export default function ClasificadorPendientes({ pendientes, clasificacion, onChange }: Props) {
   const [busqueda, setBusqueda] = useState("")
   const [filtroOrigen, setFiltroOrigen] = useState<"todos" | "compania" | "contraparte">("todos")
   const [soloSinClasif, setSoloSinClasif] = useState(false)
-
-  // Selección por checkbox
+  const [showHelp, setShowHelp] = useState(false)
   const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set())
-  const [statusAplicar, setStatusAplicar] = useState<StatusPendiente | "">("")
+  const [activo, setActivo] = useState(0)         // índice en filtrados (cursor de teclado)
+  const [showFiltros, setShowFiltros] = useState(false)
+  const buscadorRef = useRef<HTMLInputElement>(null)
+  const filaActivaRef = useRef<HTMLTableRowElement>(null)
+
+  const toast = useToast()
 
   const filtrados = useMemo(() => {
     let r = pendientes
@@ -39,7 +58,20 @@ export default function ClasificadorPendientes({ pendientes, clasificacion, onCh
     return r
   }, [pendientes, busqueda, filtroOrigen, soloSinClasif, clasificacion])
 
-  // Toggle individual
+  // Movimiento activo (donde está el cursor)
+  const movActivo = filtrados[activo]
+
+  // Cuando cambian los filtrados, resetear el cursor
+  useEffect(() => {
+    if (activo >= filtrados.length) setActivo(0)
+  }, [filtrados.length, activo])
+
+  // Scroll automático cuando se mueve el cursor con teclado
+  useEffect(() => {
+    filaActivaRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" })
+  }, [activo])
+
+  // Funciones de acción
   function toggle(id: string) {
     const s = new Set(seleccionados)
     if (s.has(id)) s.delete(id)
@@ -47,262 +79,292 @@ export default function ClasificadorPendientes({ pendientes, clasificacion, onCh
     setSeleccionados(s)
   }
 
-  // Toggle todos los visibles (filtrados)
   function toggleTodos() {
-    const todosSeleccionados = filtrados.every((m) => seleccionados.has(m.id_unico))
+    const todos = filtrados.every((m) => seleccionados.has(m.id_unico))
     const s = new Set(seleccionados)
-    if (todosSeleccionados) {
-      filtrados.forEach((m) => s.delete(m.id_unico))
-    } else {
-      filtrados.forEach((m) => s.add(m.id_unico))
-    }
+    if (todos) filtrados.forEach((m) => s.delete(m.id_unico))
+    else filtrados.forEach((m) => s.add(m.id_unico))
     setSeleccionados(s)
   }
 
-  // Aplicar el status seleccionado a TODOS los marcados
-  function aplicarStatus() {
-    if (!statusAplicar || seleccionados.size === 0) return
+  function asignarStatus(status: StatusPendiente, target: "activo" | "seleccionados") {
     const c = { ...clasificacion }
-    for (const id of seleccionados) {
-      // Validar que el status sea coherente con el origen del movimiento
-      const m = pendientes.find((x) => x.id_unico === id)
-      if (!m) continue
-      const validos = m.origen === "compania" ? STATUS_COMPANIA : STATUS_CONTRAPARTE
-      if (!validos.includes(statusAplicar)) continue
-      c[id] = statusAplicar
+    let n = 0
+    if (target === "activo") {
+      if (!movActivo) return
+      const validos = movActivo.origen === "compania" ? STATUS_COMPANIA : STATUS_CONTRAPARTE
+      if (!validos.includes(status)) return
+      c[movActivo.id_unico] = status
+      n = 1
+    } else {
+      for (const id of seleccionados) {
+        const m = pendientes.find((x) => x.id_unico === id)
+        if (!m) continue
+        const validos = m.origen === "compania" ? STATUS_COMPANIA : STATUS_CONTRAPARTE
+        if (!validos.includes(status)) continue
+        c[id] = status
+        n++
+      }
+      setSeleccionados(new Set())
     }
     onChange(c)
-    setSeleccionados(new Set())  // limpiar selección después de aplicar
+    toast.show(`${n} clasificado${n !== 1 ? "s" : ""} como ${STATUS_LABELS[status]}`, "ok")
   }
 
-  // Limpiar el status (volver a "sin clasificar") de los seleccionados
-  function limpiarSeleccionados() {
-    if (seleccionados.size === 0) return
+  function limpiarStatus(target: "activo" | "seleccionados") {
     const c = { ...clasificacion }
-    for (const id of seleccionados) delete c[id]
+    let n = 0
+    if (target === "activo") {
+      if (!movActivo) return
+      delete c[movActivo.id_unico]
+      n = 1
+    } else {
+      for (const id of seleccionados) {
+        delete c[id]
+        n++
+      }
+      setSeleccionados(new Set())
+    }
     onChange(c)
-    setSeleccionados(new Set())
+    if (n > 0) toast.show(`${n} status removido${n !== 1 ? "s" : ""}`, "info")
   }
 
-  // Cambiar individual (sigue funcionando para casos sueltos)
-  function setStatusIndividual(id: string, status: StatusPendiente | null) {
-    const c = { ...clasificacion }
-    if (status === null) delete c[id]
-    else c[id] = status
-    onChange(c)
+  // === ATAJOS DE TECLADO ===
+  useShortcuts(
+    [
+      { key: "j", description: "Mover cursor abajo", group: "Navegación", handler: () => setActivo((x) => Math.min(x + 1, filtrados.length - 1)) },
+      { key: "k", description: "Mover cursor arriba", group: "Navegación", handler: () => setActivo((x) => Math.max(x - 1, 0)) },
+      { key: "ArrowDown", description: "Mover cursor abajo", group: "Navegación", handler: () => setActivo((x) => Math.min(x + 1, filtrados.length - 1)) },
+      { key: "ArrowUp", description: "Mover cursor arriba", group: "Navegación", handler: () => setActivo((x) => Math.max(x - 1, 0)) },
+      { key: "g", description: "Ir al primer movimiento", group: "Navegación", handler: () => setActivo(0) },
+      { key: "G", shift: true, description: "Ir al último movimiento", group: "Navegación", handler: () => setActivo(filtrados.length - 1) },
+      { key: " ", description: "Tildar / destildar movimiento activo", group: "Selección", handler: () => movActivo && toggle(movActivo.id_unico) },
+      { key: "a", ctrl: true, description: "Tildar todos los visibles", group: "Selección", handler: toggleTodos },
+      { key: "Escape", description: "Limpiar selección", group: "Selección", handler: () => setSeleccionados(new Set()) },
+      { key: "1", description: "Status 1 (Posterior MSU / Pendiente MSU)", group: "Clasificación", handler: () => aplicarAtajoStatus("1") },
+      { key: "2", description: "Status 2 (No contraparte / Posterior contraparte)", group: "Clasificación", handler: () => aplicarAtajoStatus("2") },
+      { key: "3", description: "Status 3 (Arrastre)", group: "Clasificación", handler: () => aplicarAtajoStatus("3") },
+      { key: "0", description: "Quitar status", group: "Clasificación", handler: () => limpiarStatus(seleccionados.size > 0 ? "seleccionados" : "activo") },
+      { key: "f", description: "Buscar", group: "General", handler: () => buscadorRef.current?.focus() },
+      { key: "?", shift: true, description: "Mostrar atajos", group: "General", handler: () => setShowHelp(true) },
+    ],
+    true
+  )
+
+  function aplicarAtajoStatus(numero: string) {
+    if (seleccionados.size > 0) {
+      // Modo masivo: aplicar a todos los seleccionados
+      // Determinar el status según el origen mayoritario
+      let cmp = 0, cont = 0
+      for (const id of seleccionados) {
+        const m = pendientes.find((x) => x.id_unico === id)
+        if (!m) continue
+        if (m.origen === "compania") cmp++; else cont++
+      }
+      const mapa = cmp >= cont ? ATAJOS_STATUS_CMP : ATAJOS_STATUS_CONT
+      const status = mapa[numero]
+      if (status) asignarStatus(status, "seleccionados")
+    } else {
+      // Modo individual: aplicar al activo
+      if (!movActivo) return
+      const mapa = movActivo.origen === "compania" ? ATAJOS_STATUS_CMP : ATAJOS_STATUS_CONT
+      const status = mapa[numero]
+      if (status) asignarStatus(status, "activo")
+    }
   }
 
   const sinClasif = pendientes.filter((m) => !clasificacion[m.id_unico]).length
+  const progreso = pendientes.length > 0 ? Math.round(((pendientes.length - sinClasif) / pendientes.length) * 100) : 100
   const todosVisiblesSeleccionados = filtrados.length > 0 && filtrados.every((m) => seleccionados.has(m.id_unico))
-
-  // Status válidos según selección actual
-  // Si todos los seleccionados son del mismo lado, mostrar solo los válidos para ese lado
-  const statusDisponibles = useMemo(() => {
-    if (seleccionados.size === 0) return STATUS_TODOS
-    const origenes = new Set<string>()
-    for (const id of seleccionados) {
-      const m = pendientes.find((x) => x.id_unico === id)
-      if (m) origenes.add(m.origen)
-    }
-    if (origenes.size === 1) {
-      const o = Array.from(origenes)[0]
-      return o === "compania" ? STATUS_COMPANIA : STATUS_CONTRAPARTE
-    }
-    // Mezcla: solo "arrastre" es común a ambos lados
-    return ["arrastre"] as StatusPendiente[]
-  }, [seleccionados, pendientes])
 
   if (pendientes.length === 0) {
     return (
-      <div className="card text-center py-8 text-sm text-ink-400">
+      <div className="panel p-8 text-center text-sm text-ink-400">
         No hay pendientes para clasificar
       </div>
     )
   }
 
   return (
-    <div className="card space-y-3">
-      <div className="flex items-end justify-between">
-        <div>
-          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-1">Clasificación</div>
-          <div className="font-serif text-base">Status de pendientes</div>
-          <p className="text-xs text-ink-500 mt-0.5">
-            Tildá los que querés clasificar, elegí el status y aplicá. También podés cambiar uno solo desde el selector de cada fila.
-          </p>
-        </div>
-        <div className="text-right">
-          {sinClasif > 0 ? (
-            <div className="badge badge-warn">{sinClasif} sin clasificar</div>
-          ) : (
-            <div className="badge badge-ok">Todos clasificados</div>
-          )}
-        </div>
-      </div>
-
-      {/* Filtros */}
-      <div className="flex flex-col md:flex-row gap-2">
-        <div className="relative flex-1">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" />
-          <input
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar..."
-            className="input pl-9"
-          />
-        </div>
-        <select
-          value={filtroOrigen}
-          onChange={(e) => setFiltroOrigen(e.target.value as typeof filtroOrigen)}
-          className="input md:w-44"
-        >
-          <option value="todos">Todos los orígenes</option>
-          <option value="compania">Solo compañía</option>
-          <option value="contraparte">Solo contraparte</option>
-        </select>
-        <label className="flex items-center gap-2 px-3 text-xs whitespace-nowrap">
-          <input type="checkbox" checked={soloSinClasif} onChange={(e) => setSoloSinClasif(e.target.checked)} />
-          Solo sin clasificar
-        </label>
-      </div>
-
-      {/* Barra de acción masiva */}
-      <div className={`border rounded-md p-3 transition-colors ${
-        seleccionados.size > 0 ? "border-accent bg-accent-light" : "border-ink-200 bg-ink-50"
-      }`}>
-        <div className="flex flex-col md:flex-row gap-2 items-stretch md:items-center">
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <Tag size={14} className={seleccionados.size > 0 ? "text-accent" : "text-ink-400"} />
-            <span className="text-xs font-medium">
-              {seleccionados.size === 0
-                ? "Tildá filas para acción masiva"
-                : `${seleccionados.size} seleccionado${seleccionados.size !== 1 ? "s" : ""}`}
-            </span>
+    <>
+      <div className="panel">
+        {/* Header con progreso */}
+        <div className="border-b border-ink-200 px-3 py-2 flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold">Clasificación de pendientes</div>
+            <div className="flex items-center gap-2 mt-0.5">
+              <div className="h-1 flex-1 max-w-32 bg-ink-200 rounded-full overflow-hidden">
+                <div
+                  className={`h-full transition-all ${progreso === 100 ? "bg-ok" : "bg-accent"}`}
+                  style={{ width: `${progreso}%` }}
+                />
+              </div>
+              <span className="text-2xs text-ink-500">
+                {pendientes.length - sinClasif} / {pendientes.length} ({progreso}%)
+              </span>
+            </div>
           </div>
-          <div className="flex-1" />
+          <button onClick={() => setShowHelp(true)} className="btn btn-ghost text-2xs">
+            <HelpCircle size={12} /> Atajos <span className="kbd ml-1">?</span>
+          </button>
+        </div>
+
+        {/* Toolbar de filtros */}
+        <div className="border-b border-ink-200 px-3 py-2 flex items-center gap-2">
+          <div className="relative flex-1 max-w-md">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-400" />
+            <input
+              ref={buscadorRef}
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por tipo, comprobante o importe..."
+              className="input pl-7"
+            />
+            {busqueda && (
+              <button onClick={() => setBusqueda("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700">
+                <X size={12} />
+              </button>
+            )}
+            <span className="absolute right-7 top-1/2 -translate-y-1/2 kbd text-2xs">F</span>
+          </div>
           <select
-            value={statusAplicar}
-            onChange={(e) => setStatusAplicar(e.target.value as StatusPendiente | "")}
-            className="input text-xs md:w-64"
-            disabled={seleccionados.size === 0}
+            value={filtroOrigen}
+            onChange={(e) => setFiltroOrigen(e.target.value as typeof filtroOrigen)}
+            className="input w-40"
           >
-            <option value="">— elegí status —</option>
-            {statusDisponibles.map((s) => (
-              <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-            ))}
+            <option value="todos">Todos los orígenes</option>
+            <option value="compania">Compañía</option>
+            <option value="contraparte">Contraparte</option>
           </select>
           <button
-            onClick={aplicarStatus}
-            disabled={seleccionados.size === 0 || !statusAplicar}
-            className="btn btn-primary disabled:opacity-40 whitespace-nowrap"
+            onClick={() => setSoloSinClasif((x) => !x)}
+            className={`btn ${soloSinClasif ? "btn-primary" : "btn-secondary"}`}
           >
-            Aplicar clasificación
+            <Filter size={12} />
+            Solo sin clasificar
           </button>
-          {seleccionados.size > 0 && (
-            <button
-              onClick={limpiarSeleccionados}
-              className="btn btn-ghost text-error text-xs whitespace-nowrap"
-            >
-              Quitar status
-            </button>
+        </div>
+
+        {/* Barra de acción masiva */}
+        {seleccionados.size > 0 && (
+          <div className="bg-info-light border-b border-info/20 px-3 py-2 flex items-center gap-3 fade-in">
+            <Tag size={14} className="text-info" />
+            <span className="text-xs font-medium text-info-dark flex-1">
+              {seleccionados.size} seleccionado{seleccionados.size !== 1 ? "s" : ""}
+            </span>
+            <span className="text-2xs text-info-dark/70">
+              <span className="kbd">1</span> <span className="kbd">2</span> <span className="kbd">3</span> aplicar  ·
+              <span className="kbd ml-2">0</span> quitar  ·
+              <span className="kbd ml-2">Esc</span> cancelar
+            </span>
+            <button onClick={() => setSeleccionados(new Set())} className="btn btn-ghost text-xs">Limpiar</button>
+          </div>
+        )}
+
+        {/* Tabla densa */}
+        <div className="max-h-[calc(100vh-22rem)] overflow-y-auto">
+          <table className="tbl-dense">
+            <thead>
+              <tr>
+                <th className="w-8">
+                  <button onClick={toggleTodos} className="text-ink-700 hover:text-accent">
+                    {todosVisiblesSeleccionados ? <CheckSquare size={12} className="text-accent" /> : <Square size={12} />}
+                  </button>
+                </th>
+                <th className="w-8"></th>
+                <th className="w-16">Fecha</th>
+                <th>Tipo</th>
+                <th className="w-32">Comprobante</th>
+                <th className="text-right w-32">ARS</th>
+                <th className="text-right w-24">USD</th>
+                <th className="w-12">Antig.</th>
+                <th className="w-44">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.slice(0, 1000).map((m, idx) => {
+                const status = clasificacion[m.id_unico]
+                const tildado = seleccionados.has(m.id_unico)
+                const isActivo = idx === activo
+                return (
+                  <tr
+                    key={m.id_unico}
+                    ref={isActivo ? filaActivaRef : null}
+                    className={`${tildado ? "row-selected" : ""} ${isActivo ? "row-active" : ""} cursor-pointer`}
+                    onClick={() => { setActivo(idx); toggle(m.id_unico) }}
+                  >
+                    <td onClick={(e) => { e.stopPropagation(); toggle(m.id_unico) }}>
+                      {tildado ? <CheckSquare size={12} className="text-accent" /> : <Square size={12} className="text-ink-300" />}
+                    </td>
+                    <td>
+                      <span className={`pill ${m.origen === "compania" ? "bg-ink-100 text-ink-700" : "bg-info-light text-info-dark"}`}>
+                        {m.origen === "compania" ? "C" : "X"}
+                      </span>
+                    </td>
+                    <td className="text-2xs">{m.fecha?.toISOString().slice(0, 10)}</td>
+                    <td className="truncate max-w-[200px]" title={m.tipo_original}>{m.tipo_original}</td>
+                    <td className="font-mono text-2xs">{m.comprobante_raw}</td>
+                    <td className="num text-right">{formatNum(m.importe_ars)}</td>
+                    <td className="num text-right">{formatNum(m.importe_usd)}</td>
+                    <td className="text-2xs text-ink-500">{antiguedad(m.fecha?.toISOString().slice(0, 10) ?? null)}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <select
+                        value={status ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          const c = { ...clasificacion }
+                          if (v) c[m.id_unico] = v as StatusPendiente
+                          else delete c[m.id_unico]
+                          onChange(c)
+                        }}
+                        className={`input input-sm w-full ${
+                          !status ? "border-warn/30 bg-warn-light/50" : "border-ok/30 bg-ok-light/40"
+                        }`}
+                      >
+                        <option value="">— sin clasif —</option>
+                        {(m.origen === "compania" ? STATUS_COMPANIA : STATUS_CONTRAPARTE).map((s) => (
+                          <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          {filtrados.length > 1000 && (
+            <div className="text-2xs text-ink-400 text-center py-2 border-t border-ink-100">
+              Mostrando 1000 de {filtrados.length} — refiná los filtros
+            </div>
           )}
         </div>
-        {seleccionados.size > 0 && statusDisponibles.length === 1 && statusDisponibles[0] === "arrastre" && (
-          <div className="text-2xs text-amber-700 mt-2">
-            ⚠ Estás mezclando movimientos de los dos lados. Solo el status "Arrastre" aplica a ambos. Filtrá por origen para ver más opciones.
-          </div>
-        )}
+
+        {/* Footer con stats */}
+        <div className="border-t border-ink-200 px-3 py-2 flex items-center justify-between text-2xs text-ink-500">
+          <span>{filtrados.length} de {pendientes.length} pendientes visibles</span>
+          {sinClasif > 0 && <span className="text-warn">⚠ {sinClasif} sin clasificar</span>}
+        </div>
       </div>
 
-      {/* Tabla */}
-      <div className="overflow-x-auto border border-ink-200 rounded-md">
-        <table className="w-full text-xs">
-          <thead className="bg-ink-50 sticky top-0">
-            <tr>
-              <th className="text-left px-2 py-1.5 w-8">
-                <button
-                  onClick={toggleTodos}
-                  className="text-ink-700 hover:text-accent"
-                  title={todosVisiblesSeleccionados ? "Deseleccionar todos" : "Seleccionar todos los visibles"}
-                >
-                  {todosVisiblesSeleccionados
-                    ? <CheckSquare size={14} className="text-accent" />
-                    : <Square size={14} />}
-                </button>
-              </th>
-              <th className="text-left px-2 py-1.5 text-2xs uppercase text-ink-500">Origen</th>
-              <th className="text-left px-2 py-1.5 text-2xs uppercase text-ink-500">Fecha</th>
-              <th className="text-left px-2 py-1.5 text-2xs uppercase text-ink-500">Tipo</th>
-              <th className="text-left px-2 py-1.5 text-2xs uppercase text-ink-500">Comp.</th>
-              <th className="text-right px-2 py-1.5 text-2xs uppercase text-ink-500">ARS</th>
-              <th className="text-right px-2 py-1.5 text-2xs uppercase text-ink-500">USD</th>
-              <th className="text-left px-2 py-1.5 text-2xs uppercase text-ink-500 w-56">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtrados.slice(0, 500).map((m) => {
-              const status = clasificacion[m.id_unico]
-              const opciones = m.origen === "compania" ? STATUS_COMPANIA : STATUS_CONTRAPARTE
-              const tildado = seleccionados.has(m.id_unico)
-              return (
-                <tr
-                  key={m.id_unico}
-                  className={`border-t border-ink-100 cursor-pointer hover:bg-ink-50 ${tildado ? "bg-accent-light/40" : ""}`}
-                  onClick={(e) => {
-                    // Solo togglear si el click no fue sobre el dropdown de status
-                    const t = e.target as HTMLElement
-                    if (t.tagName !== "SELECT" && t.tagName !== "OPTION") {
-                      toggle(m.id_unico)
-                    }
-                  }}
-                >
-                  <td className="px-2 py-1">
-                    {tildado
-                      ? <CheckSquare size={14} className="text-accent" />
-                      : <Square size={14} className="text-ink-300" />}
-                  </td>
-                  <td className="px-2 py-1">
-                    <span className={`badge ${m.origen === "compania" ? "badge-ink" : "badge-ok"}`}>
-                      {m.origen === "compania" ? "C" : "X"}
-                    </span>
-                  </td>
-                  <td className="px-2 py-1">{m.fecha?.toISOString().slice(0, 10)}</td>
-                  <td className="px-2 py-1 truncate max-w-[140px]" title={m.tipo_original}>{m.tipo_original}</td>
-                  <td className="px-2 py-1 font-mono">{m.comprobante_raw}</td>
-                  <td className="px-2 py-1 num text-right">{m.importe_ars.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-2 py-1 num text-right">{m.importe_usd.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
-                    <select
-                      value={status ?? ""}
-                      onChange={(e) => setStatusIndividual(m.id_unico, (e.target.value || null) as StatusPendiente | null)}
-                      className={`input text-xs py-1 px-1 w-full ${!status ? "border-amber-200 bg-amber-50" : "border-accent/30 bg-accent-light"}`}
-                    >
-                      <option value="">— sin clasificar —</option>
-                      {opciones.map((s) => (
-                        <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                      ))}
-                    </select>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-        {filtrados.length > 500 && (
-          <div className="text-2xs text-ink-400 text-center py-2 border-t border-ink-200">
-            Mostrando 500 de {filtrados.length} — refiná los filtros
-          </div>
-        )}
-      </div>
-
-      {/* Stats abajo */}
-      <div className="flex items-center justify-between text-2xs text-ink-500 px-1">
-        <span>Mostrando {Math.min(filtrados.length, 500)} de {filtrados.length} filtrados — {pendientes.length} pendientes en total</span>
-        {seleccionados.size > 0 && (
-          <button onClick={() => setSeleccionados(new Set())} className="text-error hover:underline">
-            Limpiar selección
-          </button>
-        )}
-      </div>
-    </div>
+      <ShortcutHelp
+        visible={showHelp}
+        onClose={() => setShowHelp(false)}
+        shortcuts={[
+          { keys: "J / ↓", description: "Bajar cursor", group: "Navegación" },
+          { keys: "K / ↑", description: "Subir cursor", group: "Navegación" },
+          { keys: "G", description: "Ir al primero", group: "Navegación" },
+          { keys: "Shift + G", description: "Ir al último", group: "Navegación" },
+          { keys: "Espacio", description: "Tildar/destildar movimiento activo", group: "Selección" },
+          { keys: "Ctrl + A", description: "Tildar todos los visibles", group: "Selección" },
+          { keys: "Esc", description: "Limpiar selección", group: "Selección" },
+          { keys: "1", description: "Posterior MSU (cmp) / Pendiente MSU (cont)", group: "Clasificación" },
+          { keys: "2", description: "No contraparte (cmp) / Posterior contraparte (cont)", group: "Clasificación" },
+          { keys: "3", description: "Arrastre", group: "Clasificación" },
+          { keys: "0", description: "Quitar status", group: "Clasificación" },
+          { keys: "F", description: "Foco en el buscador", group: "General" },
+          { keys: "?", description: "Mostrar este panel de ayuda", group: "General" },
+        ]}
+      />
+    </>
   )
 }

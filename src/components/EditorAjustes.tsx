@@ -41,7 +41,7 @@ export default function EditorAjustes({ ajustes, onChange }: Props) {
       <div className="flex items-end justify-between mb-3">
         <div>
           <div className="text-2xs uppercase tracking-wider text-ink-500 mb-1">Ajustes manuales</div>
-          <div className="font-serif text-base">Ajustes a realizar por MSU</div>
+          <div className="text-sm font-semibold">Ajustes a realizar por MSU</div>
           <p className="text-xs text-ink-500 mt-0.5">Diferencias conocidas que se explican manualmente (errores de carga, retenciones mal aplicadas, etc.)</p>
         </div>
         <button onClick={agregar} className="btn btn-secondary">

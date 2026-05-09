@@ -36,10 +36,10 @@ export default function HistorialPage() {
   }, [])
 
   return (
-    <div className="space-y-6">
+    <div className="px-6 py-6 space-y-6">
       <div className="border-b border-ink-200 pb-6">
         <div className="text-2xs uppercase tracking-[0.2em] text-ink-500 mb-2">Historial</div>
-        <h1 className="h-display">Conciliaciones anteriores</h1>
+        <h1 className="h-page">Conciliaciones anteriores</h1>
       </div>
 
       {loading ? (
@@ -47,7 +47,7 @@ export default function HistorialPage() {
       ) : items.length === 0 ? (
         <div className="card text-center py-12">
           <FileSpreadsheet size={32} className="mx-auto text-ink-300 mb-3" />
-          <div className="font-serif text-lg">Sin conciliaciones aún</div>
+          <div className="text-base font-semibold">Sin conciliaciones aún</div>
           <p className="text-sm text-ink-500 mt-1 mb-4">Cuando ejecutes una conciliación va a aparecer acá.</p>
           <Link href="/nueva" className="btn btn-primary inline-flex">Nueva conciliación</Link>
         </div>
@@ -66,7 +66,7 @@ export default function HistorialPage() {
                     {ok ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="font-serif text-base">
+                    <div className="text-sm font-semibold">
                       {c.contrapartes?.nombre ?? "—"}
                       {c.periodo_label && <span className="text-ink-500 font-sans text-sm font-normal"> · {c.periodo_label}</span>}
                     </div>

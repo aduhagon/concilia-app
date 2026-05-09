@@ -1,9 +1,10 @@
 import "./globals.css"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { ToastProvider } from "@/components/Toast"
 
 export const metadata: Metadata = {
-  title: "ConciliaApp",
+  title: "Concilia",
   description: "Conciliación de cuentas corrientes",
 }
 
@@ -11,24 +12,38 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="es">
       <body>
-        <header className="border-b border-ink-200 bg-white">
-          <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-2.5 group">
-              <div className="w-7 h-7 rounded bg-accent flex items-center justify-center">
-                <span className="font-serif text-white text-sm font-medium">≡</span>
+        <ToastProvider>
+          <header className="border-b border-ink-200 bg-white h-14 sticky top-0 z-30">
+            <div className="h-full px-4 flex items-center justify-between max-w-[1800px] mx-auto">
+              <div className="flex items-center gap-6">
+                <Link href="/" className="flex items-center gap-2">
+                  <div className="w-7 h-7 bg-accent flex items-center justify-center">
+                    <span className="text-white text-sm font-bold tracking-tighter">C</span>
+                  </div>
+                  <span className="font-semibold text-sm tracking-tight">Concilia</span>
+                </Link>
+                <nav className="flex items-center gap-1 text-xs">
+                  <NavLink href="/">Inicio</NavLink>
+                  <NavLink href="/plantillas">Plantillas</NavLink>
+                  <NavLink href="/conciliaciones">Historial</NavLink>
+                </nav>
               </div>
-              <div className="font-serif text-base font-medium tracking-tight">Concilia</div>
-            </Link>
-            <nav className="flex items-center gap-1 text-sm">
-              <Link href="/" className="btn btn-ghost">Inicio</Link>
-              <Link href="/plantillas" className="btn btn-ghost">Plantillas</Link>
-              <Link href="/conciliaciones" className="btn btn-ghost">Historial</Link>
-              <Link href="/nueva" className="btn btn-primary ml-3">Nueva conciliación</Link>
-            </nav>
-          </div>
-        </header>
-        <main className="max-w-7xl mx-auto px-6 py-8">{children}</main>
+              <Link href="/nueva" className="btn btn-primary">
+                + Nueva conciliación
+              </Link>
+            </div>
+          </header>
+          <main className="max-w-[1800px] mx-auto">{children}</main>
+        </ToastProvider>
       </body>
     </html>
+  )
+}
+
+function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link href={href} className="px-3 py-1.5 text-ink-700 hover:text-ink-900 hover:bg-ink-100 transition-colors">
+      {children}
+    </Link>
   )
 }

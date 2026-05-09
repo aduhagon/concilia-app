@@ -82,14 +82,14 @@ export default function DetalleConciliacionPage() {
   const ok = Math.abs(dif) < 1
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="px-6 py-6 space-y-6 max-w-5xl mx-auto">
       {/* Header */}
       <div>
         <Link href="/conciliaciones" className="text-2xs uppercase tracking-[0.2em] text-ink-500 hover:text-accent inline-flex items-center gap-1">
           <ArrowLeft size={11} /> Historial
         </Link>
         <div className="flex items-baseline justify-between mt-2">
-          <h1 className="h-display">
+          <h1 className="h-page">
             {c.contrapartes?.nombre}
             {c.periodo_label && <span className="text-ink-500 text-2xl ml-2">· {c.periodo_label}</span>}
           </h1>

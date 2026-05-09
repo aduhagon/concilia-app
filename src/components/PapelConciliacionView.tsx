@@ -33,7 +33,7 @@ export default function PapelConciliacionView({
     <div className="card max-w-5xl mx-auto bg-white">
       {/* Cabecera */}
       <div className="border-b border-ink-200 pb-4 mb-5">
-        <h2 className="font-serif text-2xl font-medium">Reporte de Conciliación</h2>
+        <h2 className="text-xl font-semibold">Reporte de Conciliación</h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mt-3 text-ink-600">
           <Dato label="Cuenta" valor={contraparte} />
           <Dato label="Conciliación al" valor={fechaCierre} />
@@ -60,7 +60,7 @@ export default function PapelConciliacionView({
 
       {/* Detalle de la diferencia */}
       <div className="space-y-1">
-        <div className="font-serif text-base mb-2 mt-6">Detalle de Diferencia</div>
+        <div className="text-sm font-semibold mb-2 mt-6">Detalle de Diferencia</div>
 
         <CategoriaCard
           titulo="Comprobantes contabilizados con fecha posterior por MSU"

@@ -38,7 +38,7 @@ export default function ConciliacionContable({ r }: Props) {
   return (
     <div className="card">
       <div className="flex items-baseline justify-between mb-4">
-        <h3 className="font-serif text-lg">Conciliación contable</h3>
+        <h3 className="text-base font-semibold">Conciliación contable</h3>
         <span className="text-2xs uppercase tracking-wider text-ink-400">Saldo informado por compañía → contraparte</span>
       </div>
 

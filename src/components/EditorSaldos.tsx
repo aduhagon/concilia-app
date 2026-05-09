@@ -1,7 +1,9 @@
 "use client"
 
 import type { SaldosBilaterales } from "@/types"
-import { Copy } from "lucide-react"
+import InputMoney from "./InputMoney"
+import { Copy, AlertTriangle } from "lucide-react"
+import { formatNum } from "@/lib/format"
 
 type Props = {
   saldos: SaldosBilaterales
@@ -12,30 +14,46 @@ type Props = {
   copiarAnteriorLabel?: string
 }
 
-export default function EditorSaldos({ saldos, onChange, periodoLabel, onPeriodoChange, onCopiarAnterior, copiarAnteriorLabel }: Props) {
-  function setNum<K extends keyof SaldosBilaterales>(k: K, v: number) {
+export default function EditorSaldos({
+  saldos, onChange, periodoLabel, onPeriodoChange,
+  onCopiarAnterior, copiarAnteriorLabel,
+}: Props) {
+  function set<K extends keyof SaldosBilaterales>(k: K, v: SaldosBilaterales[K]) {
     onChange({ ...saldos, [k]: v })
   }
 
+  // Detectar inconsistencias TC vs ARS/USD
+  function inconsistenciaTC(usd: number, ars: number): { tc: number; pct: number } | null {
+    if (!saldos.tc_cierre || saldos.tc_cierre === 0) return null
+    if (usd === 0 || ars === 0) return null
+    const tcCalc = Math.abs(ars / usd)
+    const diff = Math.abs(tcCalc - saldos.tc_cierre) / saldos.tc_cierre * 100
+    if (diff > 5) return { tc: tcCalc, pct: diff }
+    return null
+  }
+
+  const incCmp = inconsistenciaTC(saldos.final_compania_usd, saldos.final_compania_ars)
+  const incCont = inconsistenciaTC(saldos.final_contraparte_usd, saldos.final_contraparte_ars)
+
   return (
-    <div className="card space-y-4">
+    <div className="panel p-5 space-y-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-1">Período y saldos</div>
-          <div className="font-serif text-base">Saldos del período</div>
+          <h3 className="h-section">Período y saldos</h3>
           <p className="text-xs text-ink-500 mt-0.5">
-            Saldos iniciales (cierre del mes anterior) y finales (cierre del mes actual) en ARS y USD para cada lado.
+            Saldos iniciales (cierre del mes anterior) y finales (cierre del mes actual). Doble columna USD + ARS.
           </p>
         </div>
         {onCopiarAnterior && (
-          <button onClick={onCopiarAnterior} className="btn btn-secondary text-xs whitespace-nowrap">
+          <button onClick={onCopiarAnterior} className="btn btn-secondary">
             <Copy size={12} />
             {copiarAnteriorLabel ?? "Copiar de mes anterior"}
           </button>
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Período + TC */}
+      <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">Período</label>
           <input
@@ -46,124 +64,96 @@ export default function EditorSaldos({ saldos, onChange, periodoLabel, onPeriodo
           />
         </div>
         <div>
-          <label className="label">TC Cierre (BNA)</label>
-          <input
-            type="number"
-            step="0.0001"
-            value={saldos.tc_cierre || ""}
-            onChange={(e) => setNum("tc_cierre", parseFloat(e.target.value) || 0)}
-            placeholder="1447.00"
-            className="input num"
+          <label className="label">TC Cierre BNA</label>
+          <InputMoney
+            value={saldos.tc_cierre}
+            onChange={(v) => set("tc_cierre", v)}
+            placeholder="1.447,00"
           />
         </div>
       </div>
 
-      {/* Saldos iniciales */}
-      <div>
-        <div className="text-2xs uppercase tracking-wider text-ink-500 mb-2">Saldos iniciales (cierre mes anterior)</div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <FilaSaldo
-            titulo="Compañía"
-            arsValue={saldos.inicial_compania_ars}
-            usdValue={saldos.inicial_compania_usd}
-            onArs={(v) => setNum("inicial_compania_ars", v)}
-            onUsd={(v) => setNum("inicial_compania_usd", v)}
-          />
-          <FilaSaldo
-            titulo="Contraparte"
-            arsValue={saldos.inicial_contraparte_ars}
-            usdValue={saldos.inicial_contraparte_usd}
-            onArs={(v) => setNum("inicial_contraparte_ars", v)}
-            onUsd={(v) => setNum("inicial_contraparte_usd", v)}
-          />
-        </div>
+      {/* Tabla de saldos al estilo papel contable */}
+      <div className="border border-ink-200">
+        <table className="w-full text-sm">
+          <thead className="bg-ink-50">
+            <tr>
+              <th className="text-left text-2xs uppercase tracking-wider text-ink-500 font-medium px-3 py-2 border-b border-ink-200"></th>
+              <th className="text-right text-2xs uppercase tracking-wider text-ink-500 font-medium px-3 py-2 border-b border-ink-200 w-44" colSpan={2}>Compañía</th>
+              <th className="text-right text-2xs uppercase tracking-wider text-ink-500 font-medium px-3 py-2 border-b border-ink-200 w-44" colSpan={2}>Contraparte</th>
+            </tr>
+            <tr>
+              <th></th>
+              <th className="text-right text-2xs text-ink-400 px-3 py-1 border-b border-ink-200 font-normal">USD</th>
+              <th className="text-right text-2xs text-ink-400 px-3 py-1 border-b border-ink-200 font-normal">ARS</th>
+              <th className="text-right text-2xs text-ink-400 px-3 py-1 border-b border-ink-200 font-normal">USD</th>
+              <th className="text-right text-2xs text-ink-400 px-3 py-1 border-b border-ink-200 font-normal">ARS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="px-3 py-2 text-xs text-ink-500 border-b border-ink-100">Saldo inicial</td>
+              <td className="px-2 py-1 border-b border-ink-100">
+                <InputMoney value={saldos.inicial_compania_usd} onChange={(v) => set("inicial_compania_usd", v)} />
+              </td>
+              <td className="px-2 py-1 border-b border-ink-100">
+                <InputMoney value={saldos.inicial_compania_ars} onChange={(v) => set("inicial_compania_ars", v)} />
+              </td>
+              <td className="px-2 py-1 border-b border-ink-100">
+                <InputMoney value={saldos.inicial_contraparte_usd} onChange={(v) => set("inicial_contraparte_usd", v)} />
+              </td>
+              <td className="px-2 py-1 border-b border-ink-100">
+                <InputMoney value={saldos.inicial_contraparte_ars} onChange={(v) => set("inicial_contraparte_ars", v)} />
+              </td>
+            </tr>
+            <tr className="bg-accent-light/30">
+              <td className="px-3 py-2 text-xs font-semibold text-ink-900 border-b border-ink-200">Saldo final</td>
+              <td className="px-2 py-1 border-b border-ink-200">
+                <InputMoney value={saldos.final_compania_usd} onChange={(v) => set("final_compania_usd", v)} large />
+              </td>
+              <td className="px-2 py-1 border-b border-ink-200">
+                <InputMoney value={saldos.final_compania_ars} onChange={(v) => set("final_compania_ars", v)} large />
+              </td>
+              <td className="px-2 py-1 border-b border-ink-200">
+                <InputMoney value={saldos.final_contraparte_usd} onChange={(v) => set("final_contraparte_usd", v)} large />
+              </td>
+              <td className="px-2 py-1 border-b border-ink-200">
+                <InputMoney value={saldos.final_contraparte_ars} onChange={(v) => set("final_contraparte_ars", v)} large />
+              </td>
+            </tr>
+            <tr className="bg-warn-light/40">
+              <td className="px-3 py-2 text-xs font-semibold text-warn-dark">Diferencia</td>
+              <td className="px-3 py-2 text-right num text-warn-dark text-sm font-semibold" colSpan={2}>
+                USD {formatNum(saldos.final_compania_usd - saldos.final_contraparte_usd)}
+              </td>
+              <td className="px-3 py-2 text-right num text-warn-dark text-sm font-semibold" colSpan={2}>
+                ARS {formatNum(saldos.final_compania_ars - saldos.final_contraparte_ars)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
-      {/* Saldos finales */}
-      <div>
-        <div className="text-2xs uppercase tracking-wider text-ink-500 mb-2">Saldos finales (cierre mes actual)</div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <FilaSaldo
-            titulo="Compañía"
-            arsValue={saldos.final_compania_ars}
-            usdValue={saldos.final_compania_usd}
-            onArs={(v) => setNum("final_compania_ars", v)}
-            onUsd={(v) => setNum("final_compania_usd", v)}
-            destacado
-          />
-          <FilaSaldo
-            titulo="Contraparte"
-            arsValue={saldos.final_contraparte_ars}
-            usdValue={saldos.final_contraparte_usd}
-            onArs={(v) => setNum("final_contraparte_ars", v)}
-            onUsd={(v) => setNum("final_contraparte_usd", v)}
-            destacado
-          />
-        </div>
-      </div>
-
-      {/* Diferencia visual */}
-      <div className="border-t border-ink-200 pt-3">
-        <div className="text-2xs uppercase tracking-wider text-ink-500 mb-2">Diferencia esperada (Compañía − Contraparte)</div>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded px-3 py-2">
-            <span className="text-ink-700">USD</span>
-            <span className="num font-medium text-amber-700">
-              {(saldos.final_compania_usd - saldos.final_contraparte_usd).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
+      {/* Avisos de inconsistencia TC */}
+      {(incCmp || incCont) && (
+        <div className="bg-warn-light border border-warn/30 px-3 py-2 text-xs text-warn-dark flex items-start gap-2">
+          <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+          <div>
+            <div className="font-semibold mb-1">Posible inconsistencia con el TC</div>
+            {incCmp && (
+              <div>
+                Compañía: el TC implícito (ARS/USD) es {formatNum(incCmp.tc, 4)}, difiere {incCmp.pct.toFixed(1)}% del TC ingresado ({formatNum(saldos.tc_cierre, 4)})
+              </div>
+            )}
+            {incCont && (
+              <div>
+                Contraparte: el TC implícito es {formatNum(incCont.tc, 4)}, difiere {incCont.pct.toFixed(1)}% del TC ingresado
+              </div>
+            )}
+            <div className="text-2xs mt-1 text-warn">Verificá que los importes y el TC sean consistentes.</div>
           </div>
-          <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded px-3 py-2">
-            <span className="text-ink-700">ARS</span>
-            <span className="num font-medium text-amber-700">
-              {(saldos.final_compania_ars - saldos.final_contraparte_ars).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
         </div>
-        <div className="text-2xs text-ink-500 mt-2">
-          Esta diferencia hay que explicarla con: pendientes (4 categorías) + ajustes manuales.
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function FilaSaldo({
-  titulo, arsValue, usdValue, onArs, onUsd, destacado,
-}: {
-  titulo: string
-  arsValue: number
-  usdValue: number
-  onArs: (v: number) => void
-  onUsd: (v: number) => void
-  destacado?: boolean
-}) {
-  return (
-    <div className={`border rounded-md p-3 ${destacado ? "border-accent/30 bg-accent-light/30" : "border-ink-200"}`}>
-      <div className="text-xs font-medium mb-2">{titulo}</div>
-      <div className="space-y-2">
-        <div>
-          <label className="text-2xs uppercase tracking-wider text-ink-500">USD</label>
-          <input
-            type="number"
-            step="0.01"
-            value={usdValue || ""}
-            onChange={(e) => onUsd(parseFloat(e.target.value) || 0)}
-            className="input text-sm num"
-            placeholder="0.00"
-          />
-        </div>
-        <div>
-          <label className="text-2xs uppercase tracking-wider text-ink-500">ARS</label>
-          <input
-            type="number"
-            step="0.01"
-            value={arsValue || ""}
-            onChange={(e) => onArs(parseFloat(e.target.value) || 0)}
-            className="input text-sm num"
-            placeholder="0.00"
-          />
-        </div>
-      </div>
+      )}
     </div>
   )
 }

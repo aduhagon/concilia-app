@@ -2,21 +2,39 @@
 
 export const dynamic = "force-dynamic"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { supabase } from "@/lib/supabase-client"
 import { leerExcel, normalizarCompania, normalizarContraparte, exportarResultadoExcel } from "@/lib/excel-parser"
 import { conciliar } from "@/lib/motor-conciliacion"
-import type { PlantillaProveedor, ResultadoConciliacion } from "@/types"
+import { armarPapelConciliacion } from "@/lib/papel-conciliacion"
+import type {
+  PlantillaProveedor, ResultadoConciliacion,
+  SaldosBilaterales, AjusteManual, ClasificacionPendientes, PapelConciliacion,
+} from "@/types"
 import { Upload, Play, Download, AlertCircle, CheckCircle2, FileSpreadsheet } from "lucide-react"
 import TablaConFiltros from "@/components/TablaConFiltros"
-import ConciliacionContable from "@/components/ConciliacionContable"
+import EditorSaldos from "@/components/EditorSaldos"
+import EditorAjustes from "@/components/EditorAjustes"
+import ClasificadorPendientes from "@/components/ClasificadorPendientes"
+import PapelConciliacionView from "@/components/PapelConciliacionView"
 
 type Contraparte = { id: string; nombre: string }
+
+const SALDOS_VACIOS: SaldosBilaterales = {
+  inicial_compania_ars: 0, inicial_compania_usd: 0,
+  inicial_contraparte_ars: 0, inicial_contraparte_usd: 0,
+  final_compania_ars: 0, final_compania_usd: 0,
+  final_contraparte_ars: 0, final_contraparte_usd: 0,
+  tc_cierre: 0,
+}
 
 export default function NuevaConciliacionPage() {
   const [contrapartes, setContrapartes] = useState<Contraparte[]>([])
   const [contraparteId, setContraparteId] = useState<string>("")
   const [plantilla, setPlantilla] = useState<PlantillaProveedor | null>(null)
+
+  const [periodoLabel, setPeriodoLabel] = useState("")
+  const [saldos, setSaldos] = useState<SaldosBilaterales>(SALDOS_VACIOS)
 
   const [archivoCmp, setArchivoCmp] = useState<File | null>(null)
   const [archivoCont, setArchivoCont] = useState<File | null>(null)
@@ -25,8 +43,14 @@ export default function NuevaConciliacionPage() {
   const [procesando, setProcesando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // tab visible
-  const [tab, setTab] = useState<"resumen" | "conciliados" | "dif_cambio" | "dif_real" | "pend_cmp" | "pend_cont" | "ajustes" | "no_clas">("resumen")
+  const [clasificacion, setClasificacion] = useState<ClasificacionPendientes>({})
+  const [ajustes, setAjustes] = useState<AjusteManual[]>([])
+
+  const [firmadoPor, setFirmadoPor] = useState("")
+  const [aprobadoPor, setAprobadoPor] = useState("")
+
+  const [tab, setTab] = useState<"papel" | "clasificacion" | "ajustes" | "movimientos">("papel")
+  const [tabMovs, setTabMovs] = useState<"conciliados" | "dif_cambio" | "dif_real" | "pend_cmp" | "pend_cont" | "ajustes_propios" | "no_clas">("pend_cmp")
 
   useEffect(() => {
     supabase.from("contrapartes").select("id, nombre").order("nombre").then(({ data }) => {
@@ -52,6 +76,11 @@ export default function NuevaConciliacionPage() {
     })
   }, [contraparteId])
 
+  const papel: PapelConciliacion | null = useMemo(() => {
+    if (!resultado) return null
+    return armarPapelConciliacion(resultado, saldos, ajustes, clasificacion)
+  }, [resultado, saldos, ajustes, clasificacion])
+
   async function ejecutar() {
     if (!plantilla || !archivoCmp || !archivoCont) return
     setProcesando(true)
@@ -59,49 +88,11 @@ export default function NuevaConciliacionPage() {
     try {
       const cmpRaw = await leerExcel(archivoCmp)
       const contRaw = await leerExcel(archivoCont)
-
       const movsCmp = normalizarCompania(cmpRaw.filas, plantilla.mapeo_compania, "c")
       const movsCont = normalizarContraparte(contRaw.filas, plantilla.mapeo_contraparte, "x")
-
-      const todos = [...movsCmp, ...movsCont]
-      const r = conciliar(todos, plantilla)
-
-      // Guardar conciliación en BD
-      const { data: nueva } = await supabase
-        .from("conciliaciones")
-        .insert({
-          contraparte_id: contraparteId,
-          estado: "finalizada",
-          resumen: r.resumen,
-          saldo_final_compania_ars: r.resumen.saldo_compania_ars,
-          saldo_final_contraparte_ars: r.resumen.saldo_contraparte_ars,
-          diferencia_final_ars: r.resumen.diferencia_final_ars,
-        })
-        .select()
-        .single()
-
-      if (nueva) {
-        // movimientos resumidos (no guardamos todo el raw para mantener tabla liviana)
-        await supabase.from("movimientos").insert(
-          r.movimientos.map((m) => ({
-            conciliacion_id: nueva.id,
-            origen: m.origen,
-            fecha: m.fecha?.toISOString().slice(0, 10),
-            tipo_original: m.tipo_original,
-            tipo_normalizado: m.tipo_normalizado,
-            comprobante_raw: m.comprobante_raw,
-            clave_calculada: m.clave_calculada,
-            importe_ars: m.importe_ars,
-            importe_usd: m.importe_usd,
-            moneda: m.moneda,
-            descripcion: m.descripcion,
-            estado_conciliacion: m.estado,
-            match_id: m.match_id,
-          }))
-        )
-      }
-
+      const r = conciliar([...movsCmp, ...movsCont], plantilla)
       setResultado(r)
+      setTab("papel")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error desconocido")
     } finally {
@@ -109,15 +100,55 @@ export default function NuevaConciliacionPage() {
     }
   }
 
+  async function guardar() {
+    if (!resultado || !papel) return
+    const cont = contrapartes.find((c) => c.id === contraparteId)
+    const { error: errSave } = await supabase
+      .from("conciliaciones")
+      .insert({
+        contraparte_id: contraparteId,
+        periodo_label: periodoLabel,
+        saldo_inicial_compania_ars: saldos.inicial_compania_ars,
+        saldo_inicial_compania_usd: saldos.inicial_compania_usd,
+        saldo_inicial_contraparte_ars: saldos.inicial_contraparte_ars,
+        saldo_inicial_contraparte_usd: saldos.inicial_contraparte_usd,
+        saldo_final_compania_ars: saldos.final_compania_ars,
+        saldo_final_compania_usd: saldos.final_compania_usd,
+        saldo_final_contraparte_ars: saldos.final_contraparte_ars,
+        saldo_final_contraparte_usd: saldos.final_contraparte_usd,
+        tc_cierre: saldos.tc_cierre,
+        diferencia_final_ars: papel.diferencia_sin_explicar_ars,
+        ajustes_manuales: ajustes,
+        clasificacion_pendientes: clasificacion,
+        firmado_por: firmadoPor || null,
+        firmado_fecha: firmadoPor ? new Date().toISOString().slice(0, 10) : null,
+        aprobado_por: aprobadoPor || null,
+        aprobado_fecha: aprobadoPor ? new Date().toISOString().slice(0, 10) : null,
+        estado: "finalizada",
+        resumen: resultado.resumen,
+      })
+    if (errSave) {
+      alert("Error al guardar: " + errSave.message)
+      return
+    }
+    alert(`Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""})`)
+  }
+
   function descargar() {
-    if (!resultado) return
-    const buf = exportarResultadoExcel(resultado)
+    if (!resultado || !papel) return
+    const cont = contrapartes.find((c) => c.id === contraparteId)
+    const buf = exportarResultadoExcel(resultado, {
+      papel,
+      contraparte: cont?.nombre ?? "",
+      periodoLabel,
+      firmadoPor,
+      aprobadoPor,
+    })
     const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    const cont = contrapartes.find((c) => c.id === contraparteId)
-    a.download = `conciliacion_${cont?.nombre ?? "proveedor"}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    a.download = `conciliacion_${cont?.nombre ?? "proveedor"}_${periodoLabel || new Date().toISOString().slice(0, 10)}.xlsx`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -130,16 +161,19 @@ export default function NuevaConciliacionPage() {
     !plantilla.mapeo_contraparte.comprobante || !plantilla.mapeo_contraparte.importe
   )
 
+  const pendientes = resultado?.movimientos.filter((m) => m.estado === "pendiente") ?? []
+  const sinClasif = pendientes.filter((m) => !clasificacion[m.id_unico]).length
+  const contraparteName = contrapartes.find((c) => c.id === contraparteId)?.nombre
+
   return (
-    <div className="space-y-8">
-      <div className="border-b border-ink-200 pb-6">
+    <div className="space-y-6">
+      <div className="border-b border-ink-200 pb-4">
         <div className="text-2xs uppercase tracking-[0.2em] text-ink-500 mb-2">Conciliar</div>
         <h1 className="h-display">Nueva conciliación</h1>
       </div>
 
-      {/* Paso 1: seleccionar plantilla */}
       <section className="card">
-        <div className="text-2xs uppercase tracking-wider text-ink-500 mb-2">1. Proveedor / plantilla</div>
+        <PasoTitulo num="1" titulo="Proveedor / plantilla" />
         <select
           value={contraparteId}
           onChange={(e) => setContraparteId(e.target.value)}
@@ -150,52 +184,57 @@ export default function NuevaConciliacionPage() {
             <option key={c.id} value={c.id}>{c.nombre}</option>
           ))}
         </select>
-
         {plantilla && reglasFaltantes && (
-          <div className="mt-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-900 flex items-start gap-2">
-            <AlertCircle size={14} className="mt-0.5" />
-            La plantilla no tiene reglas configuradas. Andá a Plantillas para configurarla antes de conciliar.
-          </div>
+          <Aviso variant="warn">La plantilla no tiene reglas configuradas. Andá a Plantillas para configurarla.</Aviso>
         )}
         {plantilla && !reglasFaltantes && mapeoIncompleto && (
-          <div className="mt-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-900 flex items-start gap-2">
-            <AlertCircle size={14} className="mt-0.5" />
-            Faltan campos obligatorios en el mapeo de columnas. Revisá la plantilla.
-          </div>
+          <Aviso variant="warn">Faltan campos obligatorios en el mapeo de columnas.</Aviso>
         )}
         {plantilla && !reglasFaltantes && !mapeoIncompleto && (
-          <div className="mt-3 px-3 py-2 bg-accent-light border border-accent/20 rounded text-xs text-accent-dark flex items-start gap-2">
-            <CheckCircle2 size={14} className="mt-0.5" />
-            Plantilla lista — {plantilla.reglas_tipos.length} reglas configuradas.
-          </div>
+          <Aviso variant="ok">Plantilla lista — {plantilla.reglas_tipos.length} reglas configuradas.</Aviso>
         )}
       </section>
 
-      {/* Paso 2: archivos */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ArchivoCard
-          label="2.A Archivo COMPAÑÍA"
-          file={archivoCmp}
-          onFile={setArchivoCmp}
-        />
-        <ArchivoCard
-          label="2.B Archivo CONTRAPARTE"
-          file={archivoCont}
-          onFile={setArchivoCont}
-        />
-      </section>
+      {plantilla && !reglasFaltantes && !mapeoIncompleto && (
+        <section>
+          <div className="flex items-center gap-2 mb-2 px-1">
+            <PasoNum num="2" />
+            <h2 className="h-section">Período y saldos</h2>
+          </div>
+          <EditorSaldos
+            saldos={saldos}
+            onChange={setSaldos}
+            periodoLabel={periodoLabel}
+            onPeriodoChange={setPeriodoLabel}
+          />
+        </section>
+      )}
 
-      {/* Botón ejecutar */}
-      <div className="flex justify-end">
-        <button
-          onClick={ejecutar}
-          disabled={!plantilla || !archivoCmp || !archivoCont || procesando || !!reglasFaltantes || !!mapeoIncompleto}
-          className="btn btn-primary disabled:opacity-50"
-        >
-          <Play size={14} />
-          {procesando ? "Procesando..." : "Conciliar"}
-        </button>
-      </div>
+      {plantilla && !reglasFaltantes && !mapeoIncompleto && (
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 mb-2 px-1">
+            <PasoNum num="3" />
+            <h2 className="h-section">Archivos del período</h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <ArchivoCard label="Archivo COMPAÑÍA" file={archivoCmp} onFile={setArchivoCmp} />
+            <ArchivoCard label="Archivo CONTRAPARTE" file={archivoCont} onFile={setArchivoCont} />
+          </div>
+        </section>
+      )}
+
+      {plantilla && !reglasFaltantes && !mapeoIncompleto && (
+        <div className="flex justify-end">
+          <button
+            onClick={ejecutar}
+            disabled={!archivoCmp || !archivoCont || procesando}
+            className="btn btn-primary disabled:opacity-50"
+          >
+            <Play size={14} />
+            {procesando ? "Procesando..." : "Conciliar"}
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="card border-red-200 bg-red-50">
@@ -209,60 +248,130 @@ export default function NuevaConciliacionPage() {
         </div>
       )}
 
-      {/* Resultado */}
-      {resultado && (
+      {resultado && papel && (
         <section className="space-y-4">
           <div className="flex items-end justify-between border-b border-ink-200 pb-3">
-            <div>
-              <div className="text-2xs uppercase tracking-[0.2em] text-ink-500 mb-1">Resultado</div>
-              <h2 className="h-section">Conciliación</h2>
+            <div className="flex items-center gap-2">
+              <PasoNum num="4" />
+              <h2 className="h-section">Papel de conciliación</h2>
+              {sinClasif > 0 && (
+                <span className="badge badge-warn ml-2">{sinClasif} pendientes sin clasificar</span>
+              )}
             </div>
-            <button onClick={descargar} className="btn btn-secondary">
-              <Download size={14} /> Descargar Excel
-            </button>
+            <div className="flex gap-2">
+              <button onClick={guardar} className="btn btn-secondary">
+                <CheckCircle2 size={14} /> Guardar
+              </button>
+              <button onClick={descargar} className="btn btn-primary">
+                <Download size={14} /> Descargar Excel
+              </button>
+            </div>
           </div>
 
-          {/* Tabs */}
           <div className="flex gap-1 border-b border-ink-200 overflow-x-auto">
-            <Tab active={tab === "resumen"} onClick={() => setTab("resumen")}>Resumen</Tab>
-            <Tab active={tab === "conciliados"} onClick={() => setTab("conciliados")}>
-              Conciliados ({resultado.resumen.conciliados})
-            </Tab>
-            <Tab active={tab === "dif_cambio"} onClick={() => setTab("dif_cambio")}>
-              Dif. cambio ({resultado.resumen.conciliados_dif_ars})
-            </Tab>
-            <Tab active={tab === "dif_real"} onClick={() => setTab("dif_real")}>
-              Dif. real ({resultado.resumen.conciliados_dif_real})
-            </Tab>
-            <Tab active={tab === "pend_cmp"} onClick={() => setTab("pend_cmp")}>
-              Pend. compañía ({resultado.resumen.pendientes_compania})
-            </Tab>
-            <Tab active={tab === "pend_cont"} onClick={() => setTab("pend_cont")}>
-              Pend. contraparte ({resultado.resumen.pendientes_contraparte})
+            <Tab active={tab === "papel"} onClick={() => setTab("papel")}>Presentación</Tab>
+            <Tab active={tab === "clasificacion"} onClick={() => setTab("clasificacion")}>
+              Clasificar pendientes ({pendientes.length})
             </Tab>
             <Tab active={tab === "ajustes"} onClick={() => setTab("ajustes")}>
-              Ajustes propios
+              Ajustes manuales ({ajustes.length})
             </Tab>
-            <Tab active={tab === "no_clas"} onClick={() => setTab("no_clas")}>
-              Sin clasificar
+            <Tab active={tab === "movimientos"} onClick={() => setTab("movimientos")}>
+              Movimientos detalle
             </Tab>
           </div>
 
-          {tab === "resumen" && <ResumenView r={resultado} />}
-          {tab === "conciliados" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "conciliado")} />}
-          {tab === "dif_cambio" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "conciliado_dif_ars")} />}
-          {tab === "dif_real" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "conciliado_dif_real")} />}
-          {tab === "pend_cmp" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "compania")} />}
-          {tab === "pend_cont" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "contraparte")} />}
-          {tab === "ajustes" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "ajuste_propio")} />}
-          {tab === "no_clas" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "tipo_no_clasificado")} />}
+          {tab === "papel" && (
+            <div className="space-y-3">
+              <div className="card-tight grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="label">Conciliado por</label>
+                  <input value={firmadoPor} onChange={(e) => setFirmadoPor(e.target.value)} placeholder="Nombre" className="input" />
+                </div>
+                <div>
+                  <label className="label">Aprobado por</label>
+                  <input value={aprobadoPor} onChange={(e) => setAprobadoPor(e.target.value)} placeholder="Nombre" className="input" />
+                </div>
+              </div>
+              <PapelConciliacionView
+                papel={papel}
+                contraparte={contraparteName ?? "—"}
+                periodoLabel={periodoLabel}
+                fechaCierre={new Date().toISOString().slice(0, 10)}
+                conciliadoPor={firmadoPor}
+                conciliadoFecha={firmadoPor ? new Date().toISOString().slice(0, 10) : ""}
+                aprobadoPor={aprobadoPor}
+              />
+            </div>
+          )}
+
+          {tab === "clasificacion" && (
+            <ClasificadorPendientes
+              pendientes={pendientes}
+              clasificacion={clasificacion}
+              onChange={setClasificacion}
+            />
+          )}
+
+          {tab === "ajustes" && (
+            <EditorAjustes ajustes={ajustes} onChange={setAjustes} />
+          )}
+
+          {tab === "movimientos" && (
+            <div className="space-y-3">
+              <div className="flex gap-1 border-b border-ink-200 overflow-x-auto">
+                <Tab active={tabMovs === "pend_cmp"} onClick={() => setTabMovs("pend_cmp")}>Pend. compañía ({resultado.resumen.pendientes_compania})</Tab>
+                <Tab active={tabMovs === "pend_cont"} onClick={() => setTabMovs("pend_cont")}>Pend. contraparte ({resultado.resumen.pendientes_contraparte})</Tab>
+                <Tab active={tabMovs === "conciliados"} onClick={() => setTabMovs("conciliados")}>Conciliados ({resultado.resumen.conciliados})</Tab>
+                <Tab active={tabMovs === "dif_cambio"} onClick={() => setTabMovs("dif_cambio")}>Dif. cambio ({resultado.resumen.conciliados_dif_ars})</Tab>
+                <Tab active={tabMovs === "dif_real"} onClick={() => setTabMovs("dif_real")}>Dif. real ({resultado.resumen.conciliados_dif_real})</Tab>
+                <Tab active={tabMovs === "ajustes_propios"} onClick={() => setTabMovs("ajustes_propios")}>Ajustes propios</Tab>
+                <Tab active={tabMovs === "no_clas"} onClick={() => setTabMovs("no_clas")}>Sin clasificar</Tab>
+              </div>
+              {tabMovs === "pend_cmp" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "compania")} />}
+              {tabMovs === "pend_cont" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "contraparte")} />}
+              {tabMovs === "conciliados" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "conciliado")} />}
+              {tabMovs === "dif_cambio" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "conciliado_dif_ars")} />}
+              {tabMovs === "dif_real" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "conciliado_dif_real")} />}
+              {tabMovs === "ajustes_propios" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "ajuste_propio")} />}
+              {tabMovs === "no_clas" && <TablaConFiltros movs={resultado.movimientos.filter((m) => m.estado === "tipo_no_clasificado")} />}
+            </div>
+          )}
         </section>
       )}
     </div>
   )
 }
 
-// ----- Subcomponentes -----
+function PasoTitulo({ num, titulo }: { num: string; titulo: string }) {
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <PasoNum num={num} />
+      <span className="text-2xs uppercase tracking-wider text-ink-500">{titulo}</span>
+    </div>
+  )
+}
+
+function PasoNum({ num }: { num: string }) {
+  return (
+    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-accent text-white text-2xs font-medium">
+      {num}
+    </span>
+  )
+}
+
+function Aviso({ variant, children }: { variant: "ok" | "warn"; children: React.ReactNode }) {
+  const cls = variant === "ok"
+    ? "bg-accent-light border-accent/20 text-accent-dark"
+    : "bg-amber-50 border-amber-200 text-amber-900"
+  const Icon = variant === "ok" ? CheckCircle2 : AlertCircle
+  return (
+    <div className={`mt-3 px-3 py-2 border rounded text-xs flex items-start gap-2 ${cls}`}>
+      <Icon size={14} className="mt-0.5" />
+      <div>{children}</div>
+    </div>
+  )
+}
 
 function ArchivoCard({ label, file, onFile }: { label: string; file: File | null; onFile: (f: File) => void }) {
   return (
@@ -299,84 +408,5 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
     >
       {children}
     </button>
-  )
-}
-
-function ResumenView({ r }: { r: ResultadoConciliacion }) {
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="card">
-          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Saldos</div>
-          <div className="space-y-2 text-sm">
-            <Linea label="Compañía" valor={r.resumen.saldo_compania_ars} />
-            <Linea label="Contraparte" valor={r.resumen.saldo_contraparte_ars} />
-            <div className="border-t border-ink-200 pt-2">
-              <Linea label="Diferencia" valor={r.resumen.diferencia_final_ars} highlight />
-            </div>
-          </div>
-        </div>
-        <div className="card">
-          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Conciliación</div>
-          <div className="space-y-2 text-sm">
-            <Linea label="Conciliados" valor={r.resumen.conciliados} num={false} ok />
-            <Linea label="Con dif. cambio" valor={r.resumen.conciliados_dif_ars} num={false} />
-            <Linea label="Con dif. real" valor={r.resumen.conciliados_dif_real} num={false} warn={r.resumen.conciliados_dif_real > 0} />
-            <Linea label="Pendientes compañía" valor={r.resumen.pendientes_compania} num={false} warn={r.resumen.pendientes_compania > 0} />
-            <Linea label="Pendientes contraparte" valor={r.resumen.pendientes_contraparte} num={false} warn={r.resumen.pendientes_contraparte > 0} />
-            <Linea label="Ajustes propios" valor={r.resumen.ajustes_propios} num={false} />
-          </div>
-        </div>
-        <div className="card">
-          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Sin clasificar</div>
-          {r.resumen.tipos_no_clasificados_compania.length === 0 && r.resumen.tipos_no_clasificados_contraparte.length === 0 ? (
-            <div className="text-sm text-accent flex items-center gap-1">
-              <CheckCircle2 size={14} /> Todos los tipos clasificados
-            </div>
-          ) : (
-            <div className="space-y-2 text-xs">
-              {r.resumen.tipos_no_clasificados_compania.length > 0 && (
-                <div>
-                  <div className="text-ink-500 mb-1">Compañía:</div>
-                  <ul className="space-y-0.5">
-                    {r.resumen.tipos_no_clasificados_compania.map((t) => (
-                      <li key={t} className="font-mono text-amber-800">{t}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {r.resumen.tipos_no_clasificados_contraparte.length > 0 && (
-                <div>
-                  <div className="text-ink-500 mb-1">Contraparte:</div>
-                  <ul className="space-y-0.5">
-                    {r.resumen.tipos_no_clasificados_contraparte.map((t) => (
-                      <li key={t} className="font-mono text-amber-800">{t}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Conciliación contable a ancho completo */}
-      <ConciliacionContable r={r} />
-    </div>
-  )
-}
-
-function Linea({ label, valor, num = true, highlight = false, ok = false, warn = false }: {
-  label: string; valor: number; num?: boolean; highlight?: boolean; ok?: boolean; warn?: boolean
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-ink-600">{label}</span>
-      <span className={`num ${
-        highlight ? "font-semibold text-base" : ""
-      } ${ok ? "text-accent" : ""} ${warn ? "text-amber-700" : ""}`}>
-        {num ? valor.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : valor}
-      </span>
-    </div>
   )
 }

@@ -135,3 +135,85 @@ export type ResultadoConciliacion = {
     diferencia_final_ars: number
   }
 }
+
+// ============================================================
+// MODELO V3: papel de conciliación contable completo
+// ============================================================
+
+// Status de un pendiente (tomados del Excel real del usuario)
+export type StatusPendiente =
+  | "posterior_msu"          // Compañía: contabilizado en mes posterior por MSU
+  | "pendiente_msu"          // Contraparte: pendiente de contabilizar por MSU
+  | "posterior_contraparte"  // Contraparte: contabilizado por contraparte en mes posterior
+  | "no_contraparte"         // Compañía: no contabilizado por contraparte
+  | "arrastre"               // viene arrastrándose de meses anteriores
+  | "sin_clasificar"         // todavía no se le asignó status
+
+export const STATUS_LABELS: Record<StatusPendiente, string> = {
+  posterior_msu: "Posterior por MSU",
+  pendiente_msu: "Pendiente de contabilizar MSU",
+  posterior_contraparte: "Posterior por contraparte",
+  no_contraparte: "No contabilizado por contraparte",
+  arrastre: "Arrastre de meses anteriores",
+  sin_clasificar: "Sin clasificar",
+}
+
+// Saldos completos en ambas monedas (para los dos lados, inicial y final)
+export type SaldosBilaterales = {
+  inicial_compania_ars: number
+  inicial_compania_usd: number
+  inicial_contraparte_ars: number
+  inicial_contraparte_usd: number
+  final_compania_ars: number
+  final_compania_usd: number
+  final_contraparte_ars: number
+  final_contraparte_usd: number
+  tc_cierre: number
+}
+
+// Ajuste manual del contador
+export type AjusteManual = {
+  id: string
+  fecha: string                  // ISO date (YYYY-MM-DD)
+  concepto: string               // ej. "Error Cargill -retencion sobre liq anulada-3301-29703364"
+  comprobante?: string           // opcional
+  importe_ars: number
+  importe_usd: number
+}
+
+// Clasificación de pendientes: mapa id_movimiento → status
+export type ClasificacionPendientes = Record<string, StatusPendiente>
+
+// Composición de la diferencia (las 5 categorías + ajustes)
+export type ComposicionDiferencia = {
+  // Categoría 1: Comprobantes contabilizados por MSU con fecha posterior
+  posterior_msu: { movimientos: MovimientoResultado[]; total_ars: number; total_usd: number }
+  // Categoría 2: Comprobantes pendientes de contabilizar por MSU
+  pendiente_msu: { movimientos: MovimientoResultado[]; total_ars: number; total_usd: number }
+  // Categoría 3: Comprobantes contabilizados por contraparte con fecha posterior
+  posterior_contraparte: { movimientos: MovimientoResultado[]; total_ars: number; total_usd: number }
+  // Categoría 4: Comprobantes no contabilizados por contraparte
+  no_contraparte: { movimientos: MovimientoResultado[]; total_ars: number; total_usd: number }
+  // Categoría 5: Ajustes manuales
+  ajustes: { ajustes: AjusteManual[]; total_ars: number; total_usd: number }
+  // Sin clasificar: pendientes que el usuario todavía no clasificó
+  sin_clasificar: { movimientos: MovimientoResultado[]; total_ars: number; total_usd: number }
+  // Total general
+  total_ars: number
+  total_usd: number
+}
+
+// Resultado de Conciliación V3 (con todo el papel)
+export type PapelConciliacion = {
+  // Saldos
+  saldos: SaldosBilaterales
+  // Diferencia esperada vs explicada
+  diferencia_esperada_ars: number     // saldo_compania - saldo_contraparte
+  diferencia_esperada_usd: number
+  diferencia_explicada_ars: number    // suma de la composicion
+  diferencia_explicada_usd: number
+  diferencia_sin_explicar_ars: number  // esperada - explicada (debería dar 0)
+  diferencia_sin_explicar_usd: number
+  // Composición
+  composicion: ComposicionDiferencia
+}

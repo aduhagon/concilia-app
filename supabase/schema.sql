@@ -102,11 +102,36 @@ create table if not exists conciliaciones (
   contraparte_id uuid references contrapartes(id) on delete cascade,
   periodo_desde date,
   periodo_hasta date,
-  saldo_inicial_ars numeric(20,2) default 0,
-  saldo_inicial_usd numeric(20,2) default 0,
+  periodo_label text,                                    -- ej. "Enero 2026" o "0126"
+
+  -- Saldos iniciales (arrastre del cierre del mes anterior)
+  saldo_inicial_compania_ars numeric(20,2) default 0,
+  saldo_inicial_compania_usd numeric(20,2) default 0,
+  saldo_inicial_contraparte_ars numeric(20,2) default 0,
+  saldo_inicial_contraparte_usd numeric(20,2) default 0,
+
+  -- Saldos finales (input manual del usuario, lo que tiene en su mayor)
   saldo_final_compania_ars numeric(20,2),
+  saldo_final_compania_usd numeric(20,2),
   saldo_final_contraparte_ars numeric(20,2),
+  saldo_final_contraparte_usd numeric(20,2),
+
+  -- Tipo de cambio del cierre
+  tc_cierre numeric(20,4),
+
+  -- Diferencias calculadas
   diferencia_final_ars numeric(20,2),
+
+  -- Datos editables del contador
+  ajustes_manuales jsonb default '[]'::jsonb,            -- lista de ajustes con fecha/concepto/ARS/USD
+  clasificacion_pendientes jsonb default '{}'::jsonb,    -- mapa id_movimiento → status
+
+  -- Firmas
+  firmado_por text,
+  firmado_fecha date,
+  aprobado_por text,
+  aprobado_fecha date,
+
   estado text check (estado in ('borrador','en_proceso','finalizada')) default 'borrador',
   resumen jsonb,
   created_at timestamptz default now(),

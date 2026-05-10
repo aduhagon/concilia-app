@@ -2,6 +2,7 @@ import "./globals.css"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { ToastProvider } from "@/components/Toast"
+import HeaderUsuario from "@/components/HeaderUsuario"
 
 export const metadata: Metadata = {
   title: "Concilia",
@@ -28,9 +29,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <NavLink href="/conciliaciones">Historial</NavLink>
                 </nav>
               </div>
-              <Link href="/nueva" className="btn btn-primary">
-                + Nueva conciliación
-              </Link>
+              <div className="flex items-center gap-3">
+                <Link href="/nueva" className="btn btn-primary">
+                  + Nueva conciliación
+                </Link>
+                <HeaderUsuario />
+              </div>
             </div>
           </header>
           <main className="max-w-[1800px] mx-auto">{children}</main>

@@ -366,7 +366,7 @@ function CuentaRow({ c }: { c: CuentaOperativo }) {
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold truncate">{c.nombre}</span>
             {c.alerta_semanal && (
-              <Bell size={11} className="text-warn flex-shrink-0" title="Alerta semanal activa" />
+              <Bell size={11} className="text-warn flex-shrink-0" />
             )}
           </div>
           <div className="text-2xs text-ink-500 flex items-center gap-3 mt-0.5">

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import { Eye, EyeOff, AlertCircle } from "lucide-react"
 
 type Grupo = { id: string; nombre: string; slug: string }
-type BrandConfig = {
+type GrupoConfig = {
   color_primario: string
   color_acento: string
   logo_url: string | null
@@ -15,55 +15,51 @@ type BrandConfig = {
   tagline: string | null
 }
 
-const DEFAULT_BRAND: BrandConfig = {
+const DEFAULT_CONFIG: GrupoConfig = {
   color_primario: "#1E3A5F",
   color_acento: "#2B5CE6",
   logo_url: null,
   bg_login_url: null,
-  nombre_display: "Concilia",
-  tagline: "Conciliación de cuentas corrientes",
+  nombre_display: null,
+  tagline: null,
 }
 
 export default function LoginPage() {
   const router = useRouter()
   const [grupos, setGrupos] = useState<Grupo[]>([])
   const [grupoId, setGrupoId] = useState("")
+  const [grupoConfig, setGrupoConfig] = useState<GrupoConfig | null>(null)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPass, setShowPass] = useState(false)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [paso, setPaso] = useState<1 | 2 | 3>(1)
-  const [brand, setBrand] = useState<BrandConfig>(DEFAULT_BRAND)
 
   useEffect(() => {
-    // Cargar grupos
     supabase
       .from("grupos_trabajo")
       .select("id, nombre, slug")
       .eq("activo", true)
       .order("nombre")
       .then(({ data }) => setGrupos(data ?? []))
-
-    // Cargar config visual del primer grupo
-    async function cargarBrand() {
-      const { data: grupo } = await supabase
-        .from("grupos_trabajo")
-        .select("id")
-        .limit(1)
-        .single()
-      if (!grupo) return
-
-      const { data: config } = await supabase
-        .from("grupos_config")
-        .select("color_primario, color_acento, logo_url, bg_login_url, nombre_display, tagline")
-        .eq("grupo_id", grupo.id)
-        .single()
-
-      if (config) setBrand({ ...DEFAULT_BRAND, ...config })
-    }
-    cargarBrand()
   }, [])
+
+  // Cargar config visual cuando se selecciona un grupo
+  async function onSelectGrupo(id: string) {
+    setGrupoId(id)
+    setError(null)
+    setGrupoConfig(null)
+    if (!id) return
+
+    const { data } = await supabase
+      .from("grupos_config")
+      .select("color_primario, color_acento, logo_url, bg_login_url, nombre_display, tagline")
+      .eq("grupo_id", id)
+      .single()
+
+    if (data) setGrupoConfig({ ...DEFAULT_CONFIG, ...data })
+  }
 
   function avanzarPaso() {
     if (paso === 1 && !grupoId) { setError("Seleccioná un grupo de trabajo"); return }
@@ -134,42 +130,71 @@ export default function LoginPage() {
     else { setError(null); alert("Email de recuperación enviado. Revisá tu bandeja.") }
   }
 
+  const cfg = grupoConfig ?? DEFAULT_CONFIG
   const grupoSeleccionado = grupos.find(g => g.id === grupoId)
 
-  // Fondo del header del login
-  const loginBg = brand.bg_login_url
-    ? { backgroundImage: `url(${brand.bg_login_url})`, backgroundSize: "cover", backgroundPosition: "center" }
-    : { background: `linear-gradient(135deg, ${brand.color_primario}, ${brand.color_acento})` }
+  // Estilos del fondo del header
+  const headerStyle = grupoConfig?.bg_login_url
+    ? {
+        backgroundImage: `url(${grupoConfig.bg_login_url})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+      }
+    : {
+        background: `linear-gradient(135deg, ${cfg.color_primario}, ${cfg.color_acento})`,
+      }
+
+  const btnStyle = { background: cfg.color_acento }
 
   return (
     <div className="min-h-screen bg-ink-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-sm shadow-lg overflow-hidden">
 
-        {/* Brand header */}
-        <div
-          className="p-8 flex flex-col items-center justify-center mb-0"
-          style={loginBg}
-        >
-          {brand.logo_url ? (
-            <img src={brand.logo_url} alt="Logo" className="w-12 h-12 object-contain mb-3" />
-          ) : (
-            <div
-              className="w-12 h-12 mb-3 flex items-center justify-center"
-              style={{ background: "rgba(255,255,255,0.2)" }}
-            >
-              <span className="text-white text-xl font-bold">
-                {(brand.nombre_display ?? "C").charAt(0)}
-              </span>
+        {/* Header con fondo (imagen o gradiente) */}
+        <div className="relative h-36" style={headerStyle}>
+          {/* Overlay suave para legibilidad */}
+          <div className="absolute inset-0 bg-black/30" />
+
+          {/* Contenido del header */}
+          <div className="relative z-10 h-full flex flex-col items-center justify-center text-center px-4">
+            {grupoConfig?.logo_url ? (
+              // Mostrar logo de la empresa seleccionada
+              <img
+                src={grupoConfig.logo_url}
+                alt="Logo"
+                className="h-12 max-w-32 object-contain mb-2"
+              />
+            ) : (
+              // Iniciales o ícono genérico
+              <div
+                className="w-10 h-10 mb-2 flex items-center justify-center rounded"
+                style={{ background: "rgba(255,255,255,0.2)" }}
+              >
+                <span className="text-white text-lg font-bold">
+                  {grupoConfig
+                    ? (grupoConfig.nombre_display ?? grupoSeleccionado?.nombre ?? "G").charAt(0)
+                    : "C"
+                  }
+                </span>
+              </div>
+            )}
+            <div className="text-white font-semibold text-base leading-tight">
+              {grupoConfig
+                ? (grupoConfig.nombre_display ?? grupoSeleccionado?.nombre ?? "")
+                : "Concilia"
+              }
             </div>
-          )}
-          <h1 className="text-xl font-semibold tracking-tight text-white">
-            {brand.nombre_display ?? "Concilia"}
-          </h1>
-          <p className="text-xs text-white/70 mt-1">{brand.tagline}</p>
+            {grupoConfig?.tagline && (
+              <div className="text-white/70 text-xs mt-0.5">{grupoConfig.tagline}</div>
+            )}
+            {!grupoConfig && (
+              <div className="text-white/60 text-xs mt-0.5">Conciliación de cuentas corrientes</div>
+            )}
+          </div>
         </div>
 
-        {/* Card */}
-        <div className="bg-white border border-ink-200 p-6">
+        {/* Formulario */}
+        <div className="bg-white p-6">
 
           {/* Paso 1 — Grupo */}
           {paso === 1 && (
@@ -181,7 +206,7 @@ export default function LoginPage() {
                 <label className="label">¿A qué empresa pertenecés?</label>
                 <select
                   value={grupoId}
-                  onChange={e => { setGrupoId(e.target.value); setError(null) }}
+                  onChange={e => onSelectGrupo(e.target.value)}
                   className="input input-lg w-full"
                   autoFocus
                 >
@@ -196,7 +221,7 @@ export default function LoginPage() {
                 onClick={avanzarPaso}
                 disabled={!grupoId}
                 className="w-full py-2.5 text-sm font-semibold text-white rounded disabled:opacity-40 transition-all"
-                style={{ background: brand.color_acento }}
+                style={btnStyle}
               >
                 Continuar →
               </button>
@@ -229,7 +254,7 @@ export default function LoginPage() {
                 onClick={avanzarPaso}
                 disabled={!email.trim()}
                 className="w-full py-2.5 text-sm font-semibold text-white rounded disabled:opacity-40 transition-all"
-                style={{ background: brand.color_acento }}
+                style={btnStyle}
               >
                 Continuar →
               </button>
@@ -277,7 +302,7 @@ export default function LoginPage() {
                 type="submit"
                 disabled={cargando || !password}
                 className="w-full py-2.5 text-sm font-semibold text-white rounded disabled:opacity-40 transition-all"
-                style={{ background: brand.color_acento }}
+                style={btnStyle}
               >
                 {cargando ? "Ingresando…" : "Ingresar"}
               </button>
@@ -286,9 +311,12 @@ export default function LoginPage() {
 
         </div>
 
-        <p className="text-center text-2xs text-ink-400 mt-4">
-          ¿No tenés acceso? Contactá a tu supervisor.
-        </p>
+        <div className="bg-white border-t border-ink-100 px-6 py-3">
+          <p className="text-center text-2xs text-ink-400">
+            ¿No tenés acceso? Contactá a tu supervisor.
+          </p>
+        </div>
+
       </div>
     </div>
   )

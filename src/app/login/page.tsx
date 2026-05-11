@@ -18,7 +18,6 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [paso, setPaso] = useState<1 | 2 | 3>(1)
 
-  // Cargar grupos disponibles
   useEffect(() => {
     supabase
       .from("grupos_trabajo")
@@ -54,23 +53,30 @@ export default function LoginPage() {
         return
       }
 
-      // 2. Verificar que el usuario pertenece al grupo seleccionado y está activo
+      // 2. Buscar el usuario por id sin filtrar grupo todavía
       const { data: usuario, error: userError } = await supabase
         .from("usuarios")
         .select("id, nombre, rol, primer_login, activo, grupo_id")
         .eq("id", authData.user.id)
-        .eq("grupo_id", grupoId)
         .eq("activo", true)
         .single()
 
       if (userError || !usuario) {
+        await supabase.auth.signOut()
+        setError("Usuario inactivo o sin acceso al sistema")
+        setCargando(false)
+        return
+      }
+
+      // 3. Verificar que el grupo seleccionado coincide
+      if (usuario.grupo_id !== grupoId) {
         await supabase.auth.signOut()
         setError("Tu usuario no tiene acceso a este grupo de trabajo")
         setCargando(false)
         return
       }
 
-      // 3. Si es primer login → redirigir a cambio de contraseña
+      // 4. Primer login → cambiar contraseña
       if (usuario.primer_login) {
         router.push("/cambiar-password")
         return
@@ -87,11 +93,16 @@ export default function LoginPage() {
 
   async function recuperarPassword() {
     if (!email.trim()) { setError("Ingresá tu email primero"); return }
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: `${window.location.origin}/cambiar-password`,
-    })
-    if (error) setError("No se pudo enviar el email")
-    else setError(null), alert("Email de recuperación enviado. Revisá tu bandeja.")
+    const { error } = await supabase.auth.resetPasswordForEmail(
+      email.trim().toLowerCase(),
+      { redirectTo: `${window.location.origin}/cambiar-password` }
+    )
+    if (error) {
+      setError("No se pudo enviar el email")
+    } else {
+      setError(null)
+      alert("Email de recuperación enviado. Revisá tu bandeja.")
+    }
   }
 
   const grupoSeleccionado = grupos.find(g => g.id === grupoId)
@@ -100,7 +111,6 @@ export default function LoginPage() {
     <div className="min-h-screen bg-ink-100 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
 
-        {/* Logo */}
         <div className="text-center mb-8">
           <div className="w-12 h-12 bg-accent mx-auto mb-3 flex items-center justify-center">
             <span className="text-white text-xl font-bold">C</span>
@@ -109,7 +119,6 @@ export default function LoginPage() {
           <p className="text-xs text-ink-500 mt-1">Conciliación de cuentas corrientes</p>
         </div>
 
-        {/* Card */}
         <div className="bg-white border border-ink-200 p-6">
 
           {/* Paso 1 — Grupo */}
@@ -123,7 +132,7 @@ export default function LoginPage() {
                 <select
                   value={grupoId}
                   onChange={e => { setGrupoId(e.target.value); setError(null) }}
-                  className="input input-lg"
+                  className="input input-lg w-full"
                   autoFocus
                 >
                   <option value="">— Seleccioná tu empresa —</option>
@@ -136,7 +145,7 @@ export default function LoginPage() {
               <button
                 onClick={avanzarPaso}
                 disabled={!grupoId}
-                className="btn btn-primary btn-lg w-full disabled:opacity-40"
+                className="btn btn-primary w-full disabled:opacity-40"
               >
                 Continuar →
               </button>
@@ -147,7 +156,10 @@ export default function LoginPage() {
           {paso === 2 && (
             <div className="space-y-4">
               <div>
-                <button onClick={() => setPaso(1)} className="text-2xs text-ink-500 hover:text-accent mb-3 inline-flex items-center gap-1">
+                <button
+                  onClick={() => setPaso(1)}
+                  className="text-2xs text-ink-500 hover:text-accent mb-3 inline-flex items-center gap-1"
+                >
                   ← {grupoSeleccionado?.nombre}
                 </button>
                 <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">
@@ -160,7 +172,7 @@ export default function LoginPage() {
                   onChange={e => { setEmail(e.target.value); setError(null) }}
                   onKeyDown={e => e.key === "Enter" && avanzarPaso()}
                   placeholder="usuario@empresa.com"
-                  className="input input-lg"
+                  className="input input-lg w-full"
                   autoFocus
                 />
               </div>
@@ -168,7 +180,7 @@ export default function LoginPage() {
               <button
                 onClick={avanzarPaso}
                 disabled={!email.trim()}
-                className="btn btn-primary btn-lg w-full disabled:opacity-40"
+                className="btn btn-primary w-full disabled:opacity-40"
               >
                 Continuar →
               </button>
@@ -179,7 +191,11 @@ export default function LoginPage() {
           {paso === 3 && (
             <form onSubmit={ingresar} className="space-y-4">
               <div>
-                <button type="button" onClick={() => setPaso(2)} className="text-2xs text-ink-500 hover:text-accent mb-3 inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPaso(2)}
+                  className="text-2xs text-ink-500 hover:text-accent mb-3 inline-flex items-center gap-1"
+                >
                   ← {email}
                 </button>
                 <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">
@@ -192,7 +208,7 @@ export default function LoginPage() {
                     value={password}
                     onChange={e => { setPassword(e.target.value); setError(null) }}
                     placeholder="••••••••"
-                    className="input input-lg pr-9"
+                    className="input input-lg w-full pr-9"
                     autoFocus
                   />
                   <button
@@ -215,7 +231,7 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={cargando || !password}
-                className="btn btn-primary btn-lg w-full disabled:opacity-40"
+                className="btn btn-primary w-full disabled:opacity-40"
               >
                 {cargando ? "Ingresando…" : "Ingresar"}
               </button>

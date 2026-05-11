@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic"
 
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase-client"
-import { Plus, X, Pencil, UserCheck, UserX, Mail, Shield, User } from "lucide-react"
+import { Plus, X, Pencil, UserCheck, UserX, Mail, Shield, User, Clock, CheckCircle2, AlertCircle } from "lucide-react"
 
 type Usuario = {
   id: string
@@ -14,6 +14,9 @@ type Usuario = {
   activo: boolean
   primer_login: boolean
   created_at: string
+  last_sign_in_at: string | null
+  conciliaciones_mes: number
+  conciliaciones_total: number
 }
 
 type FormData = {
@@ -30,6 +33,45 @@ const ROL_CONFIG: Record<string, { label: string; color: string; icon: React.Rea
   operativo: { label: "Operativo", color: "bg-info-light text-info", icon: <User size={11} /> },
 }
 
+function formatFecha(iso: string | null): string {
+  if (!iso) return "—"
+  const d = new Date(iso)
+  const hoy = new Date()
+  const diffMs = hoy.getTime() - d.getTime()
+  const diffMin = Math.floor(diffMs / 60000)
+  const diffHrs = Math.floor(diffMs / 3600000)
+  const diffDias = Math.floor(diffMs / 86400000)
+
+  if (diffMin < 1) return "Ahora mismo"
+  if (diffMin < 60) return `Hace ${diffMin} min`
+  if (diffHrs < 24) return `Hace ${diffHrs}h`
+  if (diffDias === 1) return "Ayer"
+  if (diffDias < 7) return `Hace ${diffDias} días`
+  return d.toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" })
+}
+
+function EstadoActivacion({ u }: { u: Usuario }) {
+  if (!u.activo) {
+    return (
+      <span className="inline-flex items-center gap-1 text-2xs font-semibold bg-ink-100 text-ink-400 px-2 py-0.5 rounded-full">
+        <UserX size={10} /> Inactivo
+      </span>
+    )
+  }
+  if (u.primer_login) {
+    return (
+      <span className="inline-flex items-center gap-1 text-2xs font-semibold bg-warn-light text-warn px-2 py-0.5 rounded-full">
+        <AlertCircle size={10} /> Pendiente activación
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-2xs font-semibold bg-ok-light text-ok px-2 py-0.5 rounded-full">
+      <CheckCircle2 size={10} /> Activo
+    </span>
+  )
+}
+
 export default function UsuariosPage() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [loading, setLoading] = useState(true)
@@ -43,23 +85,21 @@ export default function UsuariosPage() {
   async function cargar() {
     setLoading(true)
 
-    // Usuario actual
     const { data: { user } } = await supabase.auth.getUser()
+
+    const { data } = await supabase
+      .from("usuarios_stats")
+      .select("*")
+      .order("nombre")
+
+    const lista = (data ?? []) as Usuario[]
+    setUsuarios(lista)
+
     if (user) {
-      const { data: actual } = await supabase
-        .from("usuarios")
-        .select("id, nombre, email, rol, activo, primer_login, created_at")
-        .eq("id", user.id)
-        .single()
+      const actual = lista.find(u => u.id === user.id)
       if (actual) setUsuarioActual(actual)
     }
 
-    const { data } = await supabase
-      .from("usuarios")
-      .select("id, nombre, email, rol, activo, primer_login, created_at")
-      .order("nombre")
-
-    setUsuarios(data ?? [])
     setLoading(false)
   }
 
@@ -96,7 +136,6 @@ export default function UsuariosPage() {
     setResultado(null)
 
     if (editando) {
-      // Solo actualizar nombre y rol — no el email
       const { error } = await supabase
         .from("usuarios")
         .update({
@@ -114,21 +153,12 @@ export default function UsuariosPage() {
         cargar()
       }
     } else {
-      // CREAR — invitar usuario nuevo
       const { data: grupo } = await supabase
         .from("grupos_trabajo")
         .select("id")
         .limit(1)
         .single()
 
-      // 1. Crear en Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.admin
-        ? // Si tiene permisos admin usar admin API
-          { data: null, error: { message: "usar invitación" } }
-        : { data: null, error: { message: "usar invitación" } }
-
-      // Como el cliente no tiene permisos admin, usamos el flujo de invitación
-      // Generamos un token de invitación y lo guardamos
       const token = Math.random().toString(36).substring(2) + Date.now().toString(36)
       const expira = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
 
@@ -147,14 +177,9 @@ export default function UsuariosPage() {
       if (invError) {
         setResultado({ tipo: "error", msg: "Error al crear invitación: " + invError.message })
       } else {
-        // Mostrar el link de activación
         const link = `${window.location.origin}/activar?token=${token}`
-        setResultado({
-          tipo: "ok",
-          msg: `✅ Invitación creada. Enviá este link al usuario:\n${link}`,
-        })
+        setResultado({ tipo: "ok", msg: `✅ Invitación creada. Enviá este link al usuario:\n${link}` })
         cargar()
-        // No cerrar el form para que el admin pueda copiar el link
       }
     }
     setGuardando(false)
@@ -165,28 +190,23 @@ export default function UsuariosPage() {
       alert("No podés desactivar tu propio usuario")
       return
     }
-    const { error } = await supabase
+    await supabase
       .from("usuarios")
       .update({ activo: !u.activo, updated_at: new Date().toISOString() })
       .eq("id", u.id)
-
-    if (!error) cargar()
+    cargar()
   }
 
   async function reenviarInvitacion(u: Usuario) {
     const token = Math.random().toString(36).substring(2) + Date.now().toString(36)
     const expira = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
-
     const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
 
-    // Invalidar invitaciones anteriores para este email
-    await supabase
-      .from("invitaciones")
+    await supabase.from("invitaciones")
       .update({ usado: true })
       .eq("email", u.email)
       .eq("usado", false)
 
-    // Crear nueva invitación
     await supabase.from("invitaciones").insert({
       grupo_id: grupo?.id,
       email: u.email,
@@ -198,12 +218,19 @@ export default function UsuariosPage() {
     })
 
     const link = `${window.location.origin}/activar?token=${token}`
-    alert(`Nuevo link de activación:\n\n${link}\n\nVálido por 48 horas.`)
+    alert(`Nuevo link de activación (válido 48hs):\n\n${link}`)
   }
 
-  // Solo admin puede ver esta página — verificar
   const esAdmin = usuarioActual?.rol === "admin"
   const esSupervisor = usuarioActual?.rol === "supervisor"
+
+  // Stats generales
+  const stats = {
+    total: usuarios.length,
+    activos: usuarios.filter(u => u.activo && !u.primer_login).length,
+    pendientes: usuarios.filter(u => u.primer_login && u.activo).length,
+    inactivos: usuarios.filter(u => !u.activo).length,
+  }
 
   return (
     <div className="px-6 py-6 space-y-6">
@@ -214,7 +241,7 @@ export default function UsuariosPage() {
           <div className="text-2xs uppercase tracking-[0.2em] text-ink-500 mb-2">Administración</div>
           <h1 className="h-page">Usuarios</h1>
           <p className="text-ink-600 mt-2 text-sm max-w-xl">
-            Gestión de accesos al sistema. Los nuevos usuarios reciben un link de activación por 48 horas.
+            Gestión de accesos. Los nuevos usuarios reciben un link de activación válido por 48 horas.
           </p>
         </div>
         {(esAdmin || esSupervisor) && (
@@ -222,6 +249,32 @@ export default function UsuariosPage() {
             <Plus size={14} /> Nuevo usuario
           </button>
         )}
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="panel p-4">
+          <div className="text-2xs uppercase tracking-wider text-ink-500 mb-1">Total</div>
+          <div className="text-2xl font-semibold num">{stats.total}</div>
+        </div>
+        <div className="panel p-4">
+          <div className="text-2xs uppercase tracking-wider text-ok mb-1 flex items-center gap-1">
+            <CheckCircle2 size={11} /> Activos
+          </div>
+          <div className="text-2xl font-semibold num text-ok">{stats.activos}</div>
+        </div>
+        <div className="panel p-4">
+          <div className="text-2xs uppercase tracking-wider text-warn mb-1 flex items-center gap-1">
+            <AlertCircle size={11} /> Sin activar
+          </div>
+          <div className="text-2xl font-semibold num text-warn">{stats.pendientes}</div>
+        </div>
+        <div className="panel p-4">
+          <div className="text-2xs uppercase tracking-wider text-ink-400 mb-1 flex items-center gap-1">
+            <UserX size={11} /> Inactivos
+          </div>
+          <div className="text-2xl font-semibold num text-ink-400">{stats.inactivos}</div>
+        </div>
       </div>
 
       {/* Formulario */}
@@ -285,7 +338,6 @@ export default function UsuariosPage() {
             </div>
           </div>
 
-          {/* Resultado */}
           {resultado && (
             <div className={`px-4 py-3 text-sm border whitespace-pre-wrap font-mono text-xs ${
               resultado.tipo === "ok"
@@ -303,11 +355,7 @@ export default function UsuariosPage() {
               disabled={guardando || !form.nombre.trim() || !form.email.trim()}
               className="btn btn-primary disabled:opacity-40"
             >
-              {guardando
-                ? "Guardando…"
-                : editando
-                  ? "Guardar cambios"
-                  : "Crear y generar link"}
+              {guardando ? "Guardando…" : editando ? "Guardar cambios" : "Crear y generar link"}
             </button>
           </div>
         </div>
@@ -317,78 +365,102 @@ export default function UsuariosPage() {
       {loading ? (
         <div className="text-sm text-ink-400 text-center py-8">Cargando…</div>
       ) : (
-        <div className="panel divide-y divide-ink-200">
-          {usuarios.map(u => {
-            const rolCfg = ROL_CONFIG[u.rol] ?? ROL_CONFIG.operativo
-            const esMismo = u.id === usuarioActual?.id
+        <div className="panel overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-ink-200 bg-ink-50">
+                <th className="text-left px-4 py-2.5 text-2xs uppercase tracking-wider text-ink-500 font-semibold">Usuario</th>
+                <th className="text-left px-3 py-2.5 text-2xs uppercase tracking-wider text-ink-500 font-semibold">Rol</th>
+                <th className="text-left px-3 py-2.5 text-2xs uppercase tracking-wider text-ink-500 font-semibold">Estado</th>
+                <th className="text-left px-3 py-2.5 text-2xs uppercase tracking-wider text-ink-500 font-semibold hidden md:table-cell">
+                  <span className="flex items-center gap-1"><Clock size={11} /> Último acceso</span>
+                </th>
+                <th className="text-center px-3 py-2.5 text-2xs uppercase tracking-wider text-ink-500 font-semibold hidden md:table-cell">Conc. este mes</th>
+                <th className="px-3 py-2.5"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {usuarios.map(u => {
+                const rolCfg = ROL_CONFIG[u.rol] ?? ROL_CONFIG.operativo
+                const esMismo = u.id === usuarioActual?.id
+                const puedeEditar = (esAdmin || (esSupervisor && u.rol === "operativo")) && !esMismo
 
-            return (
-              <div
-                key={u.id}
-                className={`flex items-center px-4 py-3 gap-3 group ${!u.activo ? "opacity-50" : ""}`}
-              >
-                {/* Avatar */}
-                <div className="w-8 h-8 bg-accent-light flex items-center justify-center text-accent font-semibold text-sm flex-shrink-0">
-                  {u.nombre.charAt(0).toUpperCase()}
-                </div>
-
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold">{u.nombre}</span>
-                    {esMismo && (
-                      <span className="text-2xs bg-accent text-white px-1.5 py-0.5 rounded">Vos</span>
-                    )}
-                    {!u.activo && (
-                      <span className="text-2xs bg-ink-100 text-ink-400 px-1.5 py-0.5 rounded">Inactivo</span>
-                    )}
-                    {u.primer_login && u.activo && (
-                      <span className="text-2xs bg-warn-light text-warn px-1.5 py-0.5 rounded">Sin activar</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 mt-0.5">
-                    <span className="text-2xs text-ink-500 flex items-center gap-1">
-                      <Mail size={10} /> {u.email}
-                    </span>
-                    <span className={`text-2xs font-semibold inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${rolCfg.color}`}>
-                      {rolCfg.icon} {rolCfg.label}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Acciones */}
-                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  {u.primer_login && u.activo && (
-                    <button
-                      onClick={() => reenviarInvitacion(u)}
-                      className="btn btn-secondary py-1 px-2 text-2xs"
-                      title="Reenviar link de activación"
-                    >
-                      <Mail size={11} /> Reenviar link
-                    </button>
-                  )}
-                  {(esAdmin || (esSupervisor && u.rol === "operativo")) && !esMismo && (
-                    <button
-                      onClick={() => abrirEditar(u)}
-                      className="btn btn-secondary py-1 px-2 text-2xs"
-                    >
-                      <Pencil size={11} /> Editar
-                    </button>
-                  )}
-                  {!esMismo && (esAdmin || (esSupervisor && u.rol === "operativo")) && (
-                    <button
-                      onClick={() => toggleActivo(u)}
-                      className={`btn py-1 px-2 text-2xs ${u.activo ? "btn-secondary text-danger" : "btn-secondary text-ok"}`}
-                      title={u.activo ? "Desactivar usuario" : "Activar usuario"}
-                    >
-                      {u.activo ? <UserX size={11} /> : <UserCheck size={11} />}
-                      {u.activo ? "Desactivar" : "Activar"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )
-          })}
+                return (
+                  <tr key={u.id} className={`group hover:bg-ink-50 transition-colors ${!u.activo ? "opacity-50" : ""}`}>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-7 h-7 bg-accent-light flex items-center justify-center text-accent font-semibold text-xs flex-shrink-0">
+                          {u.nombre.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold">{u.nombre}</span>
+                            {esMismo && (
+                              <span className="text-2xs bg-accent text-white px-1.5 py-0.5 rounded">Vos</span>
+                            )}
+                          </div>
+                          <div className="text-2xs text-ink-400 flex items-center gap-1 mt-0.5">
+                            <Mail size={10} /> {u.email}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <span className={`text-2xs font-semibold inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${rolCfg.color}`}>
+                        {rolCfg.icon} {rolCfg.label}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3">
+                      <EstadoActivacion u={u} />
+                    </td>
+                    <td className="px-3 py-3 hidden md:table-cell">
+                      <span className="text-xs text-ink-500">
+                        {formatFecha(u.last_sign_in_at)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-center hidden md:table-cell">
+                      <span className={`text-sm font-semibold num ${u.conciliaciones_mes > 0 ? "text-ok" : "text-ink-300"}`}>
+                        {u.conciliaciones_mes}
+                      </span>
+                      {u.conciliaciones_total > 0 && (
+                        <div className="text-2xs text-ink-400">{u.conciliaciones_total} total</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+                        {u.primer_login && u.activo && (
+                          <button
+                            onClick={() => reenviarInvitacion(u)}
+                            className="btn btn-secondary py-1 px-2 text-2xs"
+                            title="Reenviar link"
+                          >
+                            <Mail size={11} /> Reenviar
+                          </button>
+                        )}
+                        {puedeEditar && (
+                          <button
+                            onClick={() => abrirEditar(u)}
+                            className="btn btn-secondary py-1 px-2 text-2xs"
+                          >
+                            <Pencil size={11} /> Editar
+                          </button>
+                        )}
+                        {puedeEditar && (
+                          <button
+                            onClick={() => toggleActivo(u)}
+                            className={`btn py-1 px-2 text-2xs ${u.activo ? "btn-secondary text-danger" : "btn-secondary text-ok"}`}
+                          >
+                            {u.activo ? <UserX size={11} /> : <UserCheck size={11} />}
+                            {u.activo ? "Desactivar" : "Activar"}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

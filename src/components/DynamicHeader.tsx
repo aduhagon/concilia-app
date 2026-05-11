@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { usePathname } from "next/navigation"
 import { supabase } from "@/lib/supabase-client"
 import HeaderUsuario from "@/components/HeaderUsuario"
 
@@ -23,20 +24,31 @@ const DEFAULT: Config = {
   nombre_display: "Concilia",
 }
 
+// Rutas donde NO se muestra el header
+const RUTAS_SIN_HEADER = ["/login", "/activar", "/cambiar-password"]
+
 export default function DynamicHeader() {
+  const pathname = usePathname()
   const [cfg, setCfg] = useState<Config>(DEFAULT)
 
+  // No mostrar en rutas públicas
+  const esRutaPublica = RUTAS_SIN_HEADER.some(r => pathname.startsWith(r))
+
   useEffect(() => {
-    // Intentar desde sessionStorage primero (más rápido)
+    if (esRutaPublica) return
+
+    // Intentar desde sessionStorage primero
     const cached = sessionStorage.getItem("concilia_config")
     if (cached) {
       try {
         const parsed = JSON.parse(cached)
         setCfg({ ...DEFAULT, ...parsed })
+        document.body.style.backgroundColor = parsed.color_fondo ?? DEFAULT.color_fondo
+        document.body.style.fontFamily = `"${parsed.tipografia ?? DEFAULT.tipografia}", system-ui, sans-serif`
       } catch {}
     }
 
-    // Siempre refrescar desde Supabase
+    // Refrescar desde Supabase
     async function cargar() {
       const { data: grupo } = await supabase
         .from("grupos_trabajo")
@@ -55,14 +67,15 @@ export default function DynamicHeader() {
         const config = { ...DEFAULT, ...data }
         setCfg(config)
         sessionStorage.setItem("concilia_config", JSON.stringify(config))
-
-        // Aplicar fondo a body
         document.body.style.backgroundColor = config.color_fondo
         document.body.style.fontFamily = `"${config.tipografia}", system-ui, sans-serif`
       }
     }
     cargar()
-  }, [])
+  }, [esRutaPublica, pathname])
+
+  // No renderizar en rutas públicas
+  if (esRutaPublica) return null
 
   return (
     <header
@@ -73,11 +86,7 @@ export default function DynamicHeader() {
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2">
             {cfg.logo_url ? (
-              <img
-                src={cfg.logo_url}
-                alt="Logo"
-                className="w-7 h-7 object-contain"
-              />
+              <img src={cfg.logo_url} alt="Logo" className="w-7 h-7 object-contain" />
             ) : (
               <div
                 className="w-7 h-7 flex items-center justify-center"

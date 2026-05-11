@@ -108,6 +108,7 @@ export default function DynamicHeader() {
               { href: "/conciliaciones", label: "Historial" },
               { href: "/supervisor", label: "Tablero" },
               { href: "/usuarios", label: "Usuarios" },
+              { href: "/tipos-cambio", label: "Tipos de cambio" },
               { href: "/configuracion", label: "Configuración" },
             ].map(({ href, label }) => (
               <Link

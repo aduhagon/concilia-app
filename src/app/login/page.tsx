@@ -6,6 +6,23 @@ import { useRouter } from "next/navigation"
 import { Eye, EyeOff, AlertCircle } from "lucide-react"
 
 type Grupo = { id: string; nombre: string; slug: string }
+type BrandConfig = {
+  color_primario: string
+  color_acento: string
+  logo_url: string | null
+  bg_login_url: string | null
+  nombre_display: string | null
+  tagline: string | null
+}
+
+const DEFAULT_BRAND: BrandConfig = {
+  color_primario: "#1E3A5F",
+  color_acento: "#2B5CE6",
+  logo_url: null,
+  bg_login_url: null,
+  nombre_display: "Concilia",
+  tagline: "Conciliación de cuentas corrientes",
+}
 
 export default function LoginPage() {
   const router = useRouter()
@@ -17,14 +34,35 @@ export default function LoginPage() {
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [paso, setPaso] = useState<1 | 2 | 3>(1)
+  const [brand, setBrand] = useState<BrandConfig>(DEFAULT_BRAND)
 
   useEffect(() => {
+    // Cargar grupos
     supabase
       .from("grupos_trabajo")
       .select("id, nombre, slug")
       .eq("activo", true)
       .order("nombre")
       .then(({ data }) => setGrupos(data ?? []))
+
+    // Cargar config visual del primer grupo
+    async function cargarBrand() {
+      const { data: grupo } = await supabase
+        .from("grupos_trabajo")
+        .select("id")
+        .limit(1)
+        .single()
+      if (!grupo) return
+
+      const { data: config } = await supabase
+        .from("grupos_config")
+        .select("color_primario, color_acento, logo_url, bg_login_url, nombre_display, tagline")
+        .eq("grupo_id", grupo.id)
+        .single()
+
+      if (config) setBrand({ ...DEFAULT_BRAND, ...config })
+    }
+    cargarBrand()
   }, [])
 
   function avanzarPaso() {
@@ -41,7 +79,6 @@ export default function LoginPage() {
     setError(null)
 
     try {
-      // 1. Autenticar con Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
         password,
@@ -53,7 +90,6 @@ export default function LoginPage() {
         return
       }
 
-      // 2. Buscar el usuario por id sin filtrar grupo todavía
       const { data: usuario, error: userError } = await supabase
         .from("usuarios")
         .select("id, nombre, rol, primer_login, activo, grupo_id")
@@ -68,7 +104,6 @@ export default function LoginPage() {
         return
       }
 
-      // 3. Verificar que el grupo seleccionado coincide
       if (usuario.grupo_id !== grupoId) {
         await supabase.auth.signOut()
         setError("Tu usuario no tiene acceso a este grupo de trabajo")
@@ -76,14 +111,12 @@ export default function LoginPage() {
         return
       }
 
-      // 4. Primer login → cambiar contraseña
       if (usuario.primer_login) {
-        router.push("/cambiar-password")
+        window.location.href = "/cambiar-password"
         return
       }
 
-      router.push("/")
-      router.refresh()
+      window.location.href = "/"
     } catch {
       setError("Error inesperado. Intentá de nuevo.")
     } finally {
@@ -97,28 +130,45 @@ export default function LoginPage() {
       email.trim().toLowerCase(),
       { redirectTo: `${window.location.origin}/cambiar-password` }
     )
-    if (error) {
-      setError("No se pudo enviar el email")
-    } else {
-      setError(null)
-      alert("Email de recuperación enviado. Revisá tu bandeja.")
-    }
+    if (error) setError("No se pudo enviar el email")
+    else { setError(null); alert("Email de recuperación enviado. Revisá tu bandeja.") }
   }
 
   const grupoSeleccionado = grupos.find(g => g.id === grupoId)
+
+  // Fondo del header del login
+  const loginBg = brand.bg_login_url
+    ? { backgroundImage: `url(${brand.bg_login_url})`, backgroundSize: "cover", backgroundPosition: "center" }
+    : { background: `linear-gradient(135deg, ${brand.color_primario}, ${brand.color_acento})` }
 
   return (
     <div className="min-h-screen bg-ink-100 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
 
-        <div className="text-center mb-8">
-          <div className="w-12 h-12 bg-accent mx-auto mb-3 flex items-center justify-center">
-            <span className="text-white text-xl font-bold">C</span>
-          </div>
-          <h1 className="text-xl font-semibold tracking-tight">Concilia</h1>
-          <p className="text-xs text-ink-500 mt-1">Conciliación de cuentas corrientes</p>
+        {/* Brand header */}
+        <div
+          className="p-8 flex flex-col items-center justify-center mb-0"
+          style={loginBg}
+        >
+          {brand.logo_url ? (
+            <img src={brand.logo_url} alt="Logo" className="w-12 h-12 object-contain mb-3" />
+          ) : (
+            <div
+              className="w-12 h-12 mb-3 flex items-center justify-center"
+              style={{ background: "rgba(255,255,255,0.2)" }}
+            >
+              <span className="text-white text-xl font-bold">
+                {(brand.nombre_display ?? "C").charAt(0)}
+              </span>
+            </div>
+          )}
+          <h1 className="text-xl font-semibold tracking-tight text-white">
+            {brand.nombre_display ?? "Concilia"}
+          </h1>
+          <p className="text-xs text-white/70 mt-1">{brand.tagline}</p>
         </div>
 
+        {/* Card */}
         <div className="bg-white border border-ink-200 p-6">
 
           {/* Paso 1 — Grupo */}
@@ -145,7 +195,8 @@ export default function LoginPage() {
               <button
                 onClick={avanzarPaso}
                 disabled={!grupoId}
-                className="btn btn-primary w-full disabled:opacity-40"
+                className="w-full py-2.5 text-sm font-semibold text-white rounded disabled:opacity-40 transition-all"
+                style={{ background: brand.color_acento }}
               >
                 Continuar →
               </button>
@@ -156,10 +207,7 @@ export default function LoginPage() {
           {paso === 2 && (
             <div className="space-y-4">
               <div>
-                <button
-                  onClick={() => setPaso(1)}
-                  className="text-2xs text-ink-500 hover:text-accent mb-3 inline-flex items-center gap-1"
-                >
+                <button onClick={() => setPaso(1)} className="text-2xs text-ink-500 hover:text-accent mb-3 inline-flex items-center gap-1">
                   ← {grupoSeleccionado?.nombre}
                 </button>
                 <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">
@@ -180,7 +228,8 @@ export default function LoginPage() {
               <button
                 onClick={avanzarPaso}
                 disabled={!email.trim()}
-                className="btn btn-primary w-full disabled:opacity-40"
+                className="w-full py-2.5 text-sm font-semibold text-white rounded disabled:opacity-40 transition-all"
+                style={{ background: brand.color_acento }}
               >
                 Continuar →
               </button>
@@ -191,11 +240,7 @@ export default function LoginPage() {
           {paso === 3 && (
             <form onSubmit={ingresar} className="space-y-4">
               <div>
-                <button
-                  type="button"
-                  onClick={() => setPaso(2)}
-                  className="text-2xs text-ink-500 hover:text-accent mb-3 inline-flex items-center gap-1"
-                >
+                <button type="button" onClick={() => setPaso(2)} className="text-2xs text-ink-500 hover:text-accent mb-3 inline-flex items-center gap-1">
                   ← {email}
                 </button>
                 <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">
@@ -231,7 +276,8 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={cargando || !password}
-                className="btn btn-primary w-full disabled:opacity-40"
+                className="w-full py-2.5 text-sm font-semibold text-white rounded disabled:opacity-40 transition-all"
+                style={{ background: brand.color_acento }}
               >
                 {cargando ? "Ingresando…" : "Ingresar"}
               </button>

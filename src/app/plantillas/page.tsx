@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
-import { Plus, Settings, Building2, X, ChevronDown } from "lucide-react"
+import { Plus, Settings, Building2, X, Pencil, Upload, Download, CheckCircle2 } from "lucide-react"
 
 type Item = {
   id: string
@@ -14,8 +14,33 @@ type Item = {
   tipo: string | null
   categoria: string | null
   sociedad: string | null
+  grupo_economico: string | null
+  cuenta_interna: string | null
+  rubro: string | null
+  es_contraparte: boolean
+  observaciones: string | null
   activo: boolean
   plantilla_id?: string
+}
+
+type FormData = {
+  nombre: string
+  cuit: string
+  cuenta_interna: string
+  tipo: string
+  es_contraparte: boolean
+  rubro: string
+  sociedad: string
+  grupo_economico: string
+  categoria: string
+  observaciones: string
+  activo: boolean
+}
+
+const FORM_VACIO: FormData = {
+  nombre: "", cuit: "", cuenta_interna: "", tipo: "proveedor",
+  es_contraparte: false, rubro: "", sociedad: "",
+  grupo_economico: "", categoria: "B", observaciones: "", activo: true,
 }
 
 const CATEGORIAS = [
@@ -46,28 +71,18 @@ export default function PlantillasPage() {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
+  const [editando, setEditando] = useState<Item | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [filtro, setFiltro] = useState("")
-
-  // Formulario nueva contraparte
-  const [form, setForm] = useState({
-    nombre: "",
-    cuit: "",
-    cuenta_interna: "",
-    tipo: "proveedor",
-    es_contraparte: false,
-    rubro: "",
-    sociedad: "",
-    grupo_economico: "",
-    categoria: "B",
-    observaciones: "",
-  })
+  const [form, setForm] = useState<FormData>(FORM_VACIO)
+  const [importando, setImportando] = useState(false)
+  const [importResult, setImportResult] = useState<{ ok: number; errores: string[] } | null>(null)
 
   async function cargar() {
     setLoading(true)
     const { data: contras } = await supabase
       .from("contrapartes")
-      .select("id, nombre, cuit, tipo, categoria, sociedad, activo, plantillas_proveedor(id)")
+      .select("id, nombre, cuit, tipo, categoria, sociedad, grupo_economico, cuenta_interna, rubro, es_contraparte, observaciones, activo, plantillas_proveedor(id)")
       .order("nombre")
 
     const items: Item[] = (contras ?? []).map((c: any) => ({
@@ -77,6 +92,11 @@ export default function PlantillasPage() {
       tipo: c.tipo,
       categoria: c.categoria,
       sociedad: c.sociedad,
+      grupo_economico: c.grupo_economico,
+      cuenta_interna: c.cuenta_interna,
+      rubro: c.rubro,
+      es_contraparte: c.es_contraparte ?? false,
+      observaciones: c.observaciones,
       activo: c.activo ?? true,
       plantilla_id: c.plantillas_proveedor?.[0]?.id,
     }))
@@ -90,55 +110,156 @@ export default function PlantillasPage() {
     setForm(f => ({ ...f, [k]: v }))
   }
 
-  async function crearContraparte() {
+  function abrirNuevo() {
+    setForm(FORM_VACIO)
+    setEditando(null)
+    setMostrarForm(true)
+    setImportResult(null)
+  }
+
+  function abrirEditar(item: Item) {
+    setForm({
+      nombre: item.nombre,
+      cuit: item.cuit ?? "",
+      cuenta_interna: item.cuenta_interna ?? "",
+      tipo: item.tipo ?? "proveedor",
+      es_contraparte: item.es_contraparte,
+      rubro: item.rubro ?? "",
+      sociedad: item.sociedad ?? "",
+      grupo_economico: item.grupo_economico ?? "",
+      categoria: item.categoria ?? "B",
+      observaciones: item.observaciones ?? "",
+      activo: item.activo,
+    })
+    setEditando(item)
+    setMostrarForm(true)
+    setImportResult(null)
+    // Scroll al formulario
+    setTimeout(() => document.getElementById("form-cuenta")?.scrollIntoView({ behavior: "smooth" }), 100)
+  }
+
+  function cerrarForm() {
+    setMostrarForm(false)
+    setEditando(null)
+    setForm(FORM_VACIO)
+  }
+
+  async function guardar() {
     if (!form.nombre.trim()) return
     setGuardando(true)
 
-    const { data: empresa } = await supabase
-      .from("empresas")
-      .select("id")
-      .limit(1)
-      .single()
+    const payload = {
+      nombre: form.nombre.trim(),
+      cuit: form.cuit.trim() || null,
+      cuenta_interna: form.cuenta_interna.trim() || null,
+      tipo: form.tipo,
+      es_contraparte: form.es_contraparte,
+      rubro: form.rubro || null,
+      sociedad: form.sociedad.trim() || null,
+      grupo_economico: form.grupo_economico.trim() || null,
+      categoria: form.categoria,
+      observaciones: form.observaciones.trim() || null,
+      activo: form.activo,
+      updated_at: new Date().toISOString(),
+    }
 
-    const { data: grupo } = await supabase
-      .from("grupos_trabajo")
-      .select("id")
-      .limit(1)
-      .single()
+    if (editando) {
+      // EDITAR
+      const { error } = await supabase
+        .from("contrapartes")
+        .update(payload)
+        .eq("id", editando.id)
 
-    const { data: nueva, error } = await supabase
-      .from("contrapartes")
-      .insert({
-        nombre: form.nombre.trim(),
-        empresa_id: empresa?.id,
-        grupo_id: grupo?.id,
-        cuit: form.cuit.trim() || null,
-        cuenta_interna: form.cuenta_interna.trim() || null,
-        tipo: form.tipo,
-        es_contraparte: form.es_contraparte,
-        rubro: form.rubro || null,
-        sociedad: form.sociedad.trim() || null,
-        grupo_economico: form.grupo_economico.trim() || null,
-        categoria: form.categoria,
-        observaciones: form.observaciones.trim() || null,
-        activo: true,
-      })
-      .select()
-      .single()
+      if (error) {
+        alert("Error al guardar: " + error.message)
+      } else {
+        cerrarForm()
+        cargar()
+      }
+    } else {
+      // CREAR
+      const { data: empresa } = await supabase.from("empresas").select("id").limit(1).single()
+      const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
 
-    if (!error && nueva) {
-      await supabase.from("plantillas_proveedor").insert({ contraparte_id: nueva.id })
-      setForm({
-        nombre: "", cuit: "", cuenta_interna: "", tipo: "proveedor",
-        es_contraparte: false, rubro: "", sociedad: "",
-        grupo_economico: "", categoria: "B", observaciones: "",
-      })
-      setMostrarForm(false)
-      cargar()
-    } else if (error) {
-      alert("Error al crear: " + error.message)
+      const { data: nueva, error } = await supabase
+        .from("contrapartes")
+        .insert({ ...payload, empresa_id: empresa?.id, grupo_id: grupo?.id })
+        .select()
+        .single()
+
+      if (!error && nueva) {
+        await supabase.from("plantillas_proveedor").insert({ contraparte_id: nueva.id })
+        cerrarForm()
+        cargar()
+      } else if (error) {
+        alert("Error al crear: " + error.message)
+      }
     }
     setGuardando(false)
+  }
+
+  // Importación masiva desde Excel
+  async function importarExcel(file: File) {
+    setImportando(true)
+    setImportResult(null)
+
+    try {
+      const XLSX = await import("xlsx")
+      const buffer = await file.arrayBuffer()
+      const wb = XLSX.read(buffer, { type: "array" })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const filas: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
+
+      const { data: empresa } = await supabase.from("empresas").select("id").limit(1).single()
+      const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
+
+      let ok = 0
+      const errores: string[] = []
+
+      for (let i = 0; i < filas.length; i++) {
+        const f = filas[i]
+        const nombre = String(f["Razón Social *"] ?? f["Razón Social"] ?? f["nombre"] ?? "").trim()
+        if (!nombre) continue
+
+        const categoria = String(f["Categoría *"] ?? f["categoria"] ?? "B").trim().toUpperCase()
+        const tipo = String(f["Tipo de Cuenta *"] ?? f["tipo"] ?? "proveedor").trim().toLowerCase()
+
+        const payload = {
+          nombre,
+          empresa_id: empresa?.id,
+          grupo_id: grupo?.id,
+          cuit: String(f["CUIT *"] ?? f["cuit"] ?? "").trim() || null,
+          cuenta_interna: String(f["N° Cuenta Sistema *"] ?? f["cuenta_interna"] ?? "").trim() || null,
+          tipo: tipo === "cliente" ? "cliente" : "proveedor",
+          es_contraparte: String(f["¿Es también contraparte?"] ?? "").toLowerCase() === "sí",
+          rubro: String(f["Rubro *"] ?? f["rubro"] ?? "").trim() || null,
+          sociedad: String(f["Sociedad *"] ?? f["sociedad"] ?? "").trim() || null,
+          grupo_economico: String(f["Grupo Económico"] ?? f["grupo_economico"] ?? "").trim() || null,
+          categoria: ["A","B","C","D","E","F"].includes(categoria) ? categoria : "B",
+          observaciones: String(f["Observaciones"] ?? "").trim() || null,
+          activo: true,
+        }
+
+        const { data: nueva, error } = await supabase
+          .from("contrapartes")
+          .insert(payload)
+          .select()
+          .single()
+
+        if (error) {
+          errores.push(`Fila ${i + 2}: ${nombre} — ${error.message}`)
+        } else {
+          await supabase.from("plantillas_proveedor").insert({ contraparte_id: nueva.id })
+          ok++
+        }
+      }
+
+      setImportResult({ ok, errores })
+      if (ok > 0) cargar()
+    } catch (e: any) {
+      setImportResult({ ok: 0, errores: ["Error al leer el archivo: " + e.message] })
+    }
+    setImportando(false)
   }
 
   const itemsFiltrados = items.filter(i =>
@@ -159,21 +280,68 @@ export default function PlantillasPage() {
             Cada cuenta tiene su configuración: datos de la contraparte, categoría de conciliación y plantilla de mapeo.
           </p>
         </div>
-        <button
-          onClick={() => setMostrarForm(v => !v)}
-          className="btn btn-primary"
-        >
-          <Plus size={14} />
-          Nueva cuenta
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Importar desde Excel */}
+          <label className="btn btn-secondary cursor-pointer">
+            <Upload size={14} />
+            {importando ? "Importando…" : "Importar Excel"}
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={e => e.target.files?.[0] && importarExcel(e.target.files[0])}
+              disabled={importando}
+            />
+          </label>
+          {/* Descargar plantilla */}
+          <a
+            href="/plantilla-cuentas.xlsx"
+            className="btn btn-secondary"
+            onClick={e => {
+              e.preventDefault()
+              descargarPlantilla()
+            }}
+          >
+            <Download size={14} /> Plantilla
+          </a>
+          <button onClick={abrirNuevo} className="btn btn-primary">
+            <Plus size={14} /> Nueva cuenta
+          </button>
+        </div>
       </div>
 
-      {/* Formulario nueva cuenta */}
+      {/* Resultado importación */}
+      {importResult && (
+        <div className={`px-4 py-3 border text-sm flex items-start gap-3 ${
+          importResult.errores.length === 0
+            ? "bg-ok-light border-ok/20 text-ok"
+            : "bg-warn-light border-warn/20 text-warn"
+        }`}>
+          <CheckCircle2 size={16} className="flex-shrink-0 mt-0.5" />
+          <div>
+            <div className="font-semibold">
+              {importResult.ok} cuenta{importResult.ok !== 1 ? "s" : ""} importada{importResult.ok !== 1 ? "s" : ""} correctamente
+            </div>
+            {importResult.errores.length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-xs">
+                {importResult.errores.map((e, i) => <li key={i}>⚠ {e}</li>)}
+              </ul>
+            )}
+          </div>
+          <button onClick={() => setImportResult(null)} className="ml-auto">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Formulario crear / editar */}
       {mostrarForm && (
-        <div className="card border-accent border-2 space-y-5">
+        <div id="form-cuenta" className="card border-accent border-2 space-y-5">
           <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold">Nueva cuenta</div>
-            <button onClick={() => setMostrarForm(false)} className="text-ink-400 hover:text-ink-700">
+            <div className="text-sm font-semibold">
+              {editando ? `Editando: ${editando.nombre}` : "Nueva cuenta"}
+            </div>
+            <button onClick={cerrarForm} className="text-ink-400 hover:text-ink-700">
               <X size={16} />
             </button>
           </div>
@@ -182,7 +350,7 @@ export default function PlantillasPage() {
           <div>
             <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Identificación</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-1">
+              <div>
                 <label className="label">Razón social *</label>
                 <input
                   value={form.nombre}
@@ -237,7 +405,7 @@ export default function PlantillasPage() {
                   ))}
                 </div>
               </div>
-              <div className="flex items-end pb-0.5">
+              <div className="flex items-end pb-1">
                 <label className="flex items-center gap-2 cursor-pointer text-sm">
                   <input
                     type="checkbox"
@@ -280,7 +448,7 @@ export default function PlantillasPage() {
                 <input
                   value={form.grupo_economico}
                   onChange={e => setField("grupo_economico", e.target.value)}
-                  placeholder="Si pertenece a un grupo, sino dejar vacío"
+                  placeholder="Si pertenece a un grupo"
                   className="input w-full"
                 />
               </div>
@@ -290,7 +458,7 @@ export default function PlantillasPage() {
           {/* Conciliación */}
           <div>
             <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Conciliación</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="label">Categoría *</label>
                 <select
@@ -312,23 +480,33 @@ export default function PlantillasPage() {
                   className="input w-full"
                 />
               </div>
+              {editando && (
+                <div className="flex items-end pb-1">
+                  <label className="flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.activo}
+                      onChange={e => setField("activo", e.target.checked)}
+                      className="w-4 h-4 accent-accent"
+                    />
+                    <span>Cuenta activa</span>
+                  </label>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Acciones */}
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-ink-200">
-            <button
-              onClick={() => setMostrarForm(false)}
-              className="btn btn-secondary"
-            >
+            <button onClick={cerrarForm} className="btn btn-secondary">
               Cancelar
             </button>
             <button
-              onClick={crearContraparte}
+              onClick={guardar}
               disabled={guardando || !form.nombre.trim()}
               className="btn btn-primary disabled:opacity-40"
             >
-              {guardando ? "Guardando…" : "Crear cuenta"}
+              {guardando ? "Guardando…" : editando ? "Guardar cambios" : "Crear cuenta"}
             </button>
           </div>
         </div>
@@ -352,21 +530,17 @@ export default function PlantillasPage() {
           <Building2 size={32} className="mx-auto text-ink-300 mb-3" />
           <div className="text-base font-semibold">Sin cuentas aún</div>
           <p className="text-sm text-ink-500 mt-1 mb-4">
-            Empezá creando la primera cuenta para conciliar.
+            Creá la primera cuenta o importá desde Excel.
           </p>
-          <button
-            onClick={() => setMostrarForm(true)}
-            className="btn btn-primary inline-flex"
-          >
+          <button onClick={abrirNuevo} className="btn btn-primary inline-flex">
             + Nueva cuenta
           </button>
         </div>
       ) : (
         <div className="panel divide-y divide-ink-200">
           {itemsFiltrados.map(item => (
-            <Link
+            <div
               key={item.id}
-              href={`/plantillas/${item.id}`}
               className="flex items-center px-4 py-3 hover:bg-ink-50 transition-colors group"
             >
               <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -384,23 +558,97 @@ export default function PlantillasPage() {
                     {item.cuit && <span className="font-mono">{item.cuit}</span>}
                     {item.tipo && <span className="capitalize">{item.tipo}</span>}
                     {item.sociedad && <span>{item.sociedad}</span>}
+                    {item.cuenta_interna && <span className="font-mono">{item.cuenta_interna}</span>}
                     <span>{item.plantilla_id ? "Con plantilla" : "Sin plantilla"}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 {item.categoria && (
                   <span className={`text-2xs font-bold px-2 py-0.5 rounded font-mono ${CAT_COLORS[item.categoria] ?? ""}`}>
                     {item.categoria}
                   </span>
                 )}
-                <Settings size={14} className="text-ink-400 group-hover:text-accent transition-colors" />
+                {/* Editar datos */}
+                <button
+                  onClick={() => abrirEditar(item)}
+                  className="btn btn-secondary py-1 px-2 text-2xs opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Editar datos de la cuenta"
+                >
+                  <Pencil size={12} /> Editar
+                </button>
+                {/* Ir a plantilla de mapeo */}
+                <Link
+                  href={`/plantillas/${item.id}`}
+                  className="btn btn-secondary py-1 px-2 text-2xs opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Configurar plantilla de mapeo"
+                >
+                  <Settings size={12} /> Plantilla
+                </Link>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}
     </div>
   )
+}
+
+// Descarga la plantilla Excel de ejemplo
+function descargarPlantilla() {
+  import("xlsx").then(XLSX => {
+    const wb = XLSX.utils.book_new()
+
+    const datos = [
+      ["Razón Social *", "CUIT *", "N° Cuenta Sistema *", "Tipo de Cuenta *", "¿Es también contraparte?", "Rubro *", "Sociedad *", "Grupo Económico", "Categoría *", "Observaciones"],
+      ["Distribuidora Norte SA", "30712345678", "CTA-001", "Proveedor", "No", "Servicios", "Sociedad A", "", "A", ""],
+      ["Comercial Sur SRL", "20301234567", "CTA-002", "Cliente", "No", "Comercial", "Sociedad A", "Grupo ABC", "B", ""],
+      ["Tech Solutions SA", "30987654321", "CTA-003", "Proveedor", "Sí", "Tecnología", "Sociedad B", "Grupo ABC", "C", "También cliente"],
+    ]
+
+    const ws = XLSX.utils.aoa_to_sheet(datos)
+
+    // Ancho de columnas
+    ws["!cols"] = [
+      { wch: 28 }, { wch: 15 }, { wch: 18 }, { wch: 16 },
+      { wch: 22 }, { wch: 16 }, { wch: 18 }, { wch: 20 },
+      { wch: 12 }, { wch: 25 },
+    ]
+
+    XLSX.utils.book_append_sheet(wb, ws, "Maestro de Cuentas")
+
+    // Hoja de rubros
+    const rubrosData = [
+      ["Rubro", "Descripción"],
+      ["Servicios", "Prestación de servicios profesionales"],
+      ["Comercial", "Compraventa de mercaderías"],
+      ["Logística", "Transporte y distribución"],
+      ["Tecnología", "Software, hardware y servicios IT"],
+      ["Construcción", "Obras e infraestructura"],
+      ["Financiero", "Entidades bancarias y financieras"],
+      ["Agropecuario", "Producción primaria"],
+      ["Salud", "Medicina y farmacéutica"],
+      ["Educación", "Instituciones educativas"],
+      ["Gobierno", "Organismos públicos"],
+      ["Otro", "Otros rubros"],
+    ]
+    const wsRubros = XLSX.utils.aoa_to_sheet(rubrosData)
+    XLSX.utils.book_append_sheet(wb, wsRubros, "Rubros")
+
+    // Hoja categorías
+    const catsData = [
+      ["Categoría", "Frecuencia", "Descripción"],
+      ["A", "Semanal", "Cuentas de alto movimiento — conciliación cada 7 días"],
+      ["B", "Mensual", "Cuentas regulares — conciliación una vez por mes"],
+      ["C", "Anual", "Cuentas de bajo movimiento — conciliación anual"],
+      ["D", "Anual excepcional", "Igual que C pero requiere aprobación del supervisor"],
+      ["E", "Manual", "Sin frecuencia automática — el supervisor define la fecha"],
+      ["F", "Manual", "Sin frecuencia automática — seguimiento especial"],
+    ]
+    const wsCats = XLSX.utils.aoa_to_sheet(catsData)
+    XLSX.utils.book_append_sheet(wb, wsCats, "Categorías")
+
+    XLSX.writeFile(wb, "plantilla_maestro_cuentas.xlsx")
+  })
 }

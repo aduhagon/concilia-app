@@ -28,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <NavLink href="/plantillas">Plantillas</NavLink>
                   <NavLink href="/conciliaciones">Historial</NavLink>
                   <NavLink href="/supervisor">Tablero</NavLink>
+                  <NavLink href="/usuarios">Usuarios</NavLink>
                 </nav>
               </div>
               <div className="flex items-center gap-3">

@@ -27,6 +27,7 @@ type CuentaOperativo = {
     diferencia_final_ars: number | null
     created_at: string
     saldo_final_compania_ars: number | null
+    estado: string | null
   } | null
   total_conciliaciones: number
   estado: "conciliada" | "pendiente" | "vencida" | "sin_iniciar"
@@ -110,7 +111,7 @@ export default function HomePage() {
     for (const c of contras ?? []) {
       const { data: ultima } = await supabase
         .from("conciliaciones")
-        .select("id, periodo_label, diferencia_final_ars, created_at, saldo_final_compania_ars")
+        .select("id, periodo_label, diferencia_final_ars, created_at, saldo_final_compania_ars, estado")
         .eq("contraparte_id", c.id)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -236,7 +237,7 @@ export default function HomePage() {
           <div className="space-y-3">
             <div className="text-sm font-semibold text-ink-700">⚡ Requieren atención</div>
             <div className="panel divide-y divide-ink-100">
-              {urgentes.map(c => <CuentaRow key={c.id} c={c} />)}
+              {urgentes.map(c => <CuentaRow key={c.id} c={c} rol={rol} />)}
             </div>
           </div>
         )}
@@ -246,7 +247,7 @@ export default function HomePage() {
           <div className="space-y-3">
             <div className="text-sm font-semibold text-ink-700">✅ Conciliadas este mes</div>
             <div className="panel divide-y divide-ink-100">
-              {conciliadas.map(c => <CuentaRow key={c.id} c={c} />)}
+              {conciliadas.map(c => <CuentaRow key={c.id} c={c} rol={rol} />)}
             </div>
           </div>
         )}
@@ -341,7 +342,7 @@ export default function HomePage() {
   )
 }
 
-function CuentaRow({ c }: { c: CuentaOperativo }) {
+function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
   const dif = c.ultima_conc?.diferencia_final_ars ?? 0
   const difOk = Math.abs(dif) < 1
 
@@ -353,15 +354,35 @@ function CuentaRow({ c }: { c: CuentaOperativo }) {
   }
   const est = estadoConfig[c.estado]
 
+  // Estado de cierre de la última conciliación
+  const estadoCierre = c.ultima_conc?.estado ?? null
+  const esSupervisor = rol === "supervisor" || rol === "admin"
+  const puedeNuevaConc = !c.ultima_conc || c.estado !== "conciliada"
+  const puedeCerrar = c.ultima_conc && (
+    estadoCierre === "en_proceso" || estadoCierre === "borrador" ||
+    estadoCierre === "finalizada" || estadoCierre === "reabierto"
+  )
+  const puedeAprobar = esSupervisor && c.ultima_conc && estadoCierre === "cerrado_operativo"
+
+  const ESTADO_CIERRE_CONFIG: Record<string, { label: string; color: string }> = {
+    borrador: { label: "Borrador", color: "bg-ink-100 text-ink-500" },
+    en_proceso: { label: "En proceso", color: "bg-info-light text-info" },
+    finalizada: { label: "Por cerrar", color: "bg-warn-light text-warn" },
+    cerrado_operativo: { label: "Pdte. aprobación", color: "bg-warn-light text-warn" },
+    aprobado: { label: "Aprobada", color: "bg-ok-light text-ok" },
+    reabierto: { label: "Reabierta", color: "bg-danger-light text-danger" },
+  }
+  const cierreCfg = estadoCierre ? ESTADO_CIERRE_CONFIG[estadoCierre] : null
+
   return (
-    <Link
-      href={c.ultima_conc ? `/conciliaciones/${c.ultima_conc.id}` : `/nueva?contraparte=${c.id}`}
-      className="flex items-center px-4 py-3 hover:bg-ink-50 transition-colors group"
-    >
+    <div className="flex items-center px-4 py-3 hover:bg-ink-50 transition-colors group">
       {/* Indicador de urgencia */}
       <div className={`w-1 self-stretch rounded-full mr-3 flex-shrink-0 ${est.dot}`} />
 
-      <div className="flex items-center gap-3 flex-1 min-w-0">
+      <Link
+        href={c.ultima_conc ? `/conciliaciones/${c.ultima_conc.id}` : `/nueva?contraparte=${c.id}`}
+        className="flex items-center gap-3 flex-1 min-w-0"
+      >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold truncate">{c.nombre}</span>
@@ -377,9 +398,9 @@ function CuentaRow({ c }: { c: CuentaOperativo }) {
             )}
           </div>
         </div>
-      </div>
+      </Link>
 
-      {/* Categoría */}
+      {/* Categoría y diferencia */}
       <div className="hidden md:flex items-center gap-4 px-4">
         {c.categoria && (
           <span className={`text-2xs font-bold px-1.5 py-0.5 rounded font-mono ${CAT_COLORS[c.categoria] ?? ""}`}>
@@ -396,14 +417,50 @@ function CuentaRow({ c }: { c: CuentaOperativo }) {
         )}
       </div>
 
-      {/* Estado */}
-      <span className={`text-2xs font-semibold inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full mr-3 ${est.color}`}>
+      {/* Estado de conciliación */}
+      <span className={`text-2xs font-semibold inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full mr-2 ${est.color}`}>
         <span className={`w-1.5 h-1.5 rounded-full ${est.dot}`} />
         {est.label}
       </span>
 
-      <ArrowRight size={14} className="text-ink-300 group-hover:text-accent transition-colors flex-shrink-0" />
-    </Link>
+      {/* Badge estado cierre */}
+      {cierreCfg && (
+        <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full mr-2 hidden md:inline-flex ${cierreCfg.color}`}>
+          {cierreCfg.label}
+        </span>
+      )}
+
+      {/* Botones de acción */}
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {puedeNuevaConc && (
+          <Link
+            href={`/nueva?contraparte=${c.id}`}
+            className="btn btn-secondary py-1 px-2 text-2xs"
+            onClick={e => e.stopPropagation()}
+          >
+            + Conciliar
+          </Link>
+        )}
+        {puedeCerrar && (
+          <Link
+            href={`/conciliaciones/${c.ultima_conc!.id}`}
+            className="btn btn-secondary py-1 px-2 text-2xs text-warn border-warn/30"
+            onClick={e => e.stopPropagation()}
+          >
+            Cerrar →
+          </Link>
+        )}
+        {puedeAprobar && (
+          <Link
+            href={`/conciliaciones/${c.ultima_conc!.id}`}
+            className="btn btn-secondary py-1 px-2 text-2xs text-ok border-ok/30"
+            onClick={e => e.stopPropagation()}
+          >
+            Aprobar →
+          </Link>
+        )}
+      </div>
+    </div>
   )
 }
 

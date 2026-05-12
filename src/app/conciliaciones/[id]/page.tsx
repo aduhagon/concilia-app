@@ -38,6 +38,7 @@ type Conciliacion = {
   observacion_aprobacion: string | null
   created_at: string
   contrapartes: { nombre: string } | null
+  cuentas_proveedor: { cuenta_interna: string; sociedades: { nombre: string } | null } | null
 }
 
 type HistorialItem = {
@@ -77,12 +78,13 @@ export default function DetalleConciliacionPage() {
   const [observacion, setObservacion] = useState("")
   const [accionando, setAccionando] = useState(false)
   const [generandoPDF, setGenerandoPDF] = useState(false)
+  const [grupoConfig, setGrupoConfig] = useState<{ logo_url: string | null; nombre_display: string | null; color_primario: string }>({ logo_url: null, nombre_display: null, color_primario: "#1E3A5F" })
 
   useEffect(() => {
     async function cargar() {
       const { data: cab } = await supabase
         .from("conciliaciones")
-        .select("*, contrapartes(nombre)")
+        .select("*, contrapartes(nombre), cuentas_proveedor(cuenta_interna, sociedades(nombre))")
         .eq("id", params.id)
         .single()
 
@@ -108,6 +110,17 @@ export default function DetalleConciliacionPage() {
           .eq("id", user.id)
           .single()
         if (u) setUsuarioActual(u)
+      }
+
+      // Cargar config visual del grupo
+      const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
+      if (grupo) {
+        const { data: cfg } = await supabase
+          .from("grupos_config")
+          .select("logo_url, nombre_display, color_primario")
+          .eq("grupo_id", grupo.id)
+          .single()
+        if (cfg) setGrupoConfig(cfg)
       }
 
       setC(cab as unknown as Conciliacion)
@@ -189,97 +202,154 @@ export default function DetalleConciliacionPage() {
       const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
 
       const W = 210
-      const margin = 18
-      let y = 20
+      const margin = 15
+      const colDerecha = W - margin
+      let y = 0
 
-      // Colores
-      const azul: [number, number, number] = [30, 58, 95]
-      const gris: [number, number, number] = [100, 101, 96]
-      const verdeOk: [number, number, number] = [26, 122, 74]
-      const naranja: [number, number, number] = [212, 88, 10]
+      // Extraer color primario del grupo
+      const hexToRgb = (hex: string): [number,number,number] => {
+        const r = parseInt(hex.slice(1,3),16)
+        const g = parseInt(hex.slice(3,5),16)
+        const b = parseInt(hex.slice(5,7),16)
+        return [r, g, b]
+      }
+      const colorPrimario: [number,number,number] = hexToRgb(grupoConfig.color_primario || "#1E3A5F")
+      const gris: [number,number,number] = [110, 110, 105]
+      const grisClarito: [number,number,number] = [200, 200, 195]
+      const verdeOk: [number,number,number] = [26, 122, 74]
+      const naranja: [number,number,number] = [212, 88, 10]
 
-      function lineaH(yy: number, color: [number,number,number] = azul, grosor = 0.3) {
+      // Datos de sociedad y cuenta
+      const sociedad = (c as any).cuentas_proveedor?.sociedades?.nombre ?? null
+      const cuentaInterna = (c as any).cuentas_proveedor?.cuenta_interna ?? null
+
+      // Nombres de firmas desde historial
+      const firmaCierre = historial.find(h => h.accion === "cerrado_operativo")
+      const firmaAprobacion = historial.find(h => h.accion === "aprobado")
+      const nombreCierre = (firmaCierre?.usuarios as any)?.nombre ?? c.firmado_por ?? "—"
+      const nombreAprobacion = (firmaAprobacion?.usuarios as any)?.nombre ?? "—"
+
+      function lineaH(yy: number, color: [number,number,number] = colorPrimario, grosor = 0.3) {
         doc.setDrawColor(...color)
         doc.setLineWidth(grosor)
-        doc.line(margin, yy, W - margin, yy)
+        doc.line(margin, yy, colDerecha, yy)
       }
 
-      function texto(txt: string, x: number, yy: number, size = 9, bold = false, color: [number,number,number] = [30,30,30]) {
+      function texto(txt: string, x: number, yy: number, size = 9, bold = false, color: [number,number,number] = [30,30,30], align: "left"|"right"|"center" = "left") {
         doc.setFontSize(size)
         doc.setFont("helvetica", bold ? "bold" : "normal")
         doc.setTextColor(...color)
-        doc.text(txt, x, yy)
+        doc.text(txt, x, yy, { align })
       }
 
-      function etiqueta(label: string, valor: string, x: number, yy: number) {
-        texto(label.toUpperCase(), x, yy, 7, false, [150,150,140])
-        texto(valor || "—", x, yy + 4.5, 9, false)
+      function etiqueta(label: string, valor: string, x: number, yy: number, maxW = 55) {
+        texto(label.toUpperCase(), x, yy, 6.5, false, [160,155,145])
+        const val = doc.splitTextToSize(valor || "—", maxW)
+        texto(val[0], x, yy + 4, 8.5, false)
       }
 
-      // ── ENCABEZADO ──
-      doc.setFillColor(...azul)
-      doc.rect(0, 0, W, 28, "F")
-      texto("CONCILIA", margin, 11, 14, true, [255,255,255])
-      texto("Conciliación de cuentas corrientes", margin, 17, 8, false, [160,180,210])
-      texto(`N° ${c.id.substring(0,8).toUpperCase()}`, W - margin, 11, 8, false, [200,210,230])
-      doc.setFontSize(8)
-      doc.setTextColor(200,210,230)
-      doc.text(new Date(c.created_at).toLocaleDateString("es-AR"), W - margin, 17, { align: "right" })
+      // ── ENCABEZADO con logo ──
+      doc.setFillColor(...colorPrimario)
+      doc.rect(0, 0, W, 32, "F")
 
-      y = 36
+      // Logo o texto
+      if (grupoConfig.logo_url) {
+        try {
+          // Intentar cargar imagen — si falla cae al texto
+          const img = new Image()
+          img.crossOrigin = "anonymous"
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve()
+            img.onerror = () => reject()
+            img.src = grupoConfig.logo_url!
+          })
+          const canvas = document.createElement("canvas")
+          canvas.width = img.width; canvas.height = img.height
+          canvas.getContext("2d")!.drawImage(img, 0, 0)
+          doc.addImage(canvas.toDataURL("image/png"), "PNG", margin, 6, 20, 20)
+          texto(grupoConfig.nombre_display ?? "Concilia", margin + 23, 13, 13, true, [255,255,255])
+          texto("Conciliación de cuentas corrientes", margin + 23, 19, 8, false, [180,200,225])
+        } catch {
+          texto(grupoConfig.nombre_display ?? "CONCILIA", margin, 13, 14, true, [255,255,255])
+          texto("Conciliación de cuentas corrientes", margin, 20, 8, false, [180,200,225])
+        }
+      } else {
+        texto(grupoConfig.nombre_display ?? "CONCILIA", margin, 13, 14, true, [255,255,255])
+        texto("Conciliación de cuentas corrientes", margin, 20, 8, false, [180,200,225])
+      }
 
-      // ── PROVEEDOR ──
-      doc.setFillColor(240, 242, 248)
-      doc.rect(margin, y, W - margin * 2, 12, "F")
-      texto(c.contrapartes?.nombre ?? "—", margin + 3, y + 5, 12, true, azul)
-      texto(c.periodo_label ?? "", margin + 3, y + 10, 8, false, gris)
-      texto(`TC: $${(c.tc_cierre ?? 0).toLocaleString("es-AR")}`, W - margin - 3, y + 7, 8, false, gris)
-      y += 18
+      texto(`N° ${c.id.substring(0,8).toUpperCase()}`, colDerecha, 12, 8, false, [200,215,235], "right")
+      texto(new Date(c.created_at).toLocaleDateString("es-AR"), colDerecha, 19, 8, false, [180,200,225], "right")
+
+      y = 40
+
+      // ── BANDA PROVEEDOR + SOCIEDAD ──
+      doc.setFillColor(242, 244, 250)
+      doc.rect(margin, y, W - margin * 2, 18, "F")
+      doc.setDrawColor(...grisClarito)
+      doc.setLineWidth(0.3)
+      doc.rect(margin, y, W - margin * 2, 18)
+
+      texto(c.contrapartes?.nombre ?? "—", margin + 4, y + 7, 13, true, colorPrimario)
+
+      // Datos debajo del nombre
+      const subInfo: string[] = []
+      if (sociedad) subInfo.push(`Sociedad: ${sociedad}`)
+      if (cuentaInterna) subInfo.push(`Cuenta: ${cuentaInterna}`)
+      if (c.periodo_label) subInfo.push(`Período: ${c.periodo_label}`)
+      texto(subInfo.join("   ·   "), margin + 4, y + 13, 7.5, false, gris)
+
+      // TC arriba derecha
+      if (c.tc_cierre && c.tc_cierre > 0) {
+        texto("TC CIERRE", colDerecha - 2, y + 6, 6.5, false, gris, "right")
+        texto(`$${c.tc_cierre.toLocaleString("es-AR", { minimumFractionDigits: 2 })}`, colDerecha - 2, y + 12, 9, true, colorPrimario, "right")
+      }
+      y += 24
 
       // ── SALDOS ──
-      lineaH(y, azul, 0.5)
+      lineaH(y, colorPrimario, 0.6)
       y += 5
-      texto("SALDOS", margin, y, 8, true, azul)
+      texto("SALDOS", margin, y, 8, true, colorPrimario)
       y += 5
 
-      // Tabla saldos
-      const colSaldo = [margin, margin + 80, margin + 115]
-      texto("", colSaldo[0], y, 7, true, gris)
-      texto("USD", colSaldo[1], y, 7, true, gris)
-      texto("ARS", colSaldo[2], y, 7, true, gris)
-      y += 4
-      lineaH(y, [200,200,200], 0.2)
-      y += 4
+      // Encabezados columnas — alineados a derecha con posición fija
+      const xUSD = 145
+      const xARS = colDerecha
+
+      texto("USD", xUSD, y, 7, true, gris, "right")
+      texto("ARS", xARS, y, 7, true, gris, "right")
+      y += 3
+      lineaH(y, grisClarito, 0.2)
+      y += 5
 
       function filaSaldo(label: string, usd: number, ars: number, resaltar = false) {
         if (resaltar) {
           doc.setFillColor(255, 243, 199)
-          doc.rect(margin, y - 3, W - margin * 2, 7, "F")
+          doc.rect(margin, y - 3.5, W - margin * 2, 7, "F")
         }
-        texto(label, colSaldo[0], y, 8, resaltar)
-        doc.setFont("helvetica", "normal")
-        doc.setFontSize(8)
-        doc.setTextColor(30,30,30)
-        doc.text(usd.toLocaleString("es-AR", { minimumFractionDigits: 2 }), colSaldo[1] + 30, y, { align: "right" })
-        doc.text(ars.toLocaleString("es-AR", { minimumFractionDigits: 2 }), colSaldo[2] + 35, y, { align: "right" })
+        texto(label, margin, y, 8.5, resaltar, resaltar ? [100, 70, 0] : [40,40,40])
+        doc.setFont("helvetica", resaltar ? "bold" : "normal")
+        doc.setFontSize(8.5)
+        doc.setTextColor(...(resaltar ? [180, 100, 0] as [number,number,number] : [40,40,40] as [number,number,number]))
+        doc.text(usd.toLocaleString("es-AR", { minimumFractionDigits: 2 }), xUSD, y, { align: "right" })
+        doc.text(ars.toLocaleString("es-AR", { minimumFractionDigits: 2 }), xARS, y, { align: "right" })
         y += 7
       }
 
       filaSaldo("Saldo s/Gestión (compañía)", c.saldo_final_compania_usd ?? 0, c.saldo_final_compania_ars ?? 0)
       filaSaldo("Saldo s/Contraparte", c.saldo_final_contraparte_usd ?? 0, c.saldo_final_contraparte_ars ?? 0)
-
+      lineaH(y - 2, grisClarito, 0.2)
       const difArs = (c.saldo_final_compania_ars ?? 0) - (c.saldo_final_contraparte_ars ?? 0)
       const difUsd = (c.saldo_final_compania_usd ?? 0) - (c.saldo_final_contraparte_usd ?? 0)
-      lineaH(y - 2, [180,180,180], 0.3)
       filaSaldo("Diferencia final", difUsd, difArs, true)
 
-      y += 3
-      lineaH(y, azul, 0.5)
-      y += 6
+      y += 4
+      lineaH(y, colorPrimario, 0.6)
+      y += 7
 
       // ── PENDIENTES ──
       if (pendientes.length > 0) {
-        texto("COMPOSICIÓN DE LA DIFERENCIA", margin, y, 8, true, azul)
+        texto("COMPOSICIÓN DE LA DIFERENCIA", margin, y, 8, true, colorPrimario)
         y += 6
 
         const grupos: Record<string, typeof pendientes> = {}
@@ -289,106 +359,143 @@ export default function DetalleConciliacionPage() {
           grupos[k].push(m)
         }
 
+        // Columnas fijas para pendientes
+        const xOrigen = margin
+        const xFecha = margin + 6
+        const xTipo = margin + 24
+        const xComp = margin + 72
+        const xImporte = colDerecha
+
         for (const [status, items] of Object.entries(grupos)) {
           if (items.length === 0) continue
           const totalArs = items.reduce((a, m) => a + Number(m.importe_ars || 0), 0)
           const totalUsd = items.reduce((a, m) => a + Number(m.importe_usd || 0), 0)
 
-          doc.setFillColor(245, 245, 242)
-          doc.rect(margin, y - 3, W - margin * 2, 6, "F")
-          texto(status.toUpperCase().replace(/_/g, " "), margin + 2, y + 1, 7, true, gris)
-          doc.setFontSize(7)
-          doc.setTextColor(...gris)
-          doc.text(`${items.length} comp. | USD ${totalUsd.toLocaleString("es-AR", { minimumFractionDigits: 2 })} | ARS ${totalArs.toLocaleString("es-AR", { minimumFractionDigits: 2 })}`, W - margin - 2, y + 1, { align: "right" })
-          y += 8
+          if (y > 260) { doc.addPage(); y = 20 }
 
-          // Filas (máx 15 por grupo)
-          const limite = Math.min(items.length, 15)
+          doc.setFillColor(245, 244, 240)
+          doc.rect(margin, y - 3, W - margin * 2, 7, "F")
+          texto(status.toUpperCase().replace(/_/g, " "), margin + 2, y + 1, 7, true, gris)
+          texto(
+            `${items.length} comp. | USD ${totalUsd.toLocaleString("es-AR", { minimumFractionDigits: 2 })} | ARS ${totalArs.toLocaleString("es-AR", { minimumFractionDigits: 2 })}`,
+            colDerecha, y + 1, 6.5, false, gris, "right"
+          )
+          y += 9
+
+          // Encabezados columna
+          doc.setFontSize(6)
+          doc.setTextColor(...grisClarito)
+          doc.text("O", xOrigen, y)
+          doc.text("FECHA", xFecha, y)
+          doc.text("TIPO", xTipo, y)
+          doc.text("COMPROBANTE", xComp, y)
+          doc.text("IMPORTE ARS", xImporte, y, { align: "right" })
+          y += 3.5
+          lineaH(y, grisClarito, 0.1)
+          y += 3
+
+          const limite = Math.min(items.length, 20)
           for (let i = 0; i < limite; i++) {
             const m = items[i]
             if (y > 270) { doc.addPage(); y = 20 }
             doc.setFontSize(7)
             doc.setFont("helvetica", "normal")
             doc.setTextColor(60,60,60)
-            const origen = m.origen === "compania" ? "C" : "X"
-            doc.text(origen, margin + 2, y)
-            doc.text(m.fecha ?? "—", margin + 8, y)
-            doc.text((m.tipo_original ?? "").substring(0, 20), margin + 28, y)
-            doc.text((m.comprobante_raw ?? "").substring(0, 22), margin + 75, y)
-            doc.text(Number(m.importe_ars).toLocaleString("es-AR", { minimumFractionDigits: 2 }), W - margin - 2, y, { align: "right" })
+            doc.text(m.origen === "compania" ? "C" : "X", xOrigen, y)
+            doc.text((m.fecha ?? "—").substring(0, 10), xFecha, y)
+            doc.text((m.tipo_original ?? "").substring(0, 18), xTipo, y)
+            doc.text((m.comprobante_raw ?? "").substring(0, 20), xComp, y)
+            doc.text(
+              Number(m.importe_ars).toLocaleString("es-AR", { minimumFractionDigits: 2 }),
+              xImporte, y, { align: "right" }
+            )
             y += 4.5
           }
-          if (items.length > 15) {
+          if (items.length > 20) {
             doc.setFontSize(7)
             doc.setTextColor(...gris)
-            doc.text(`+ ${items.length - 15} más…`, margin + 4, y)
+            doc.text(`+ ${items.length - 20} comprobantes más…`, margin + 4, y)
             y += 5
           }
-          y += 2
+          y += 3
         }
       }
 
-      // ── FIRMAS ──
-      if (y > 240) { doc.addPage(); y = 20 }
+      // ── ESTADO Y FIRMAS ──
+      if (y > 235) { doc.addPage(); y = 20 }
       y += 4
-      lineaH(y, azul, 0.5)
+      lineaH(y, colorPrimario, 0.6)
       y += 8
 
-      // Caja de estado
       const estadoLabel: Record<string, string> = {
         aprobado: "APROBADA", cerrado_operativo: "CERRADO POR OPERATIVO",
         reabierto: "REABIERTA", finalizada: "FINALIZADA",
         en_proceso: "EN PROCESO", borrador: "BORRADOR",
       }
-      const estadoColor: Record<string, [number,number,number]> = {
+      const estadoColorMap: Record<string, [number,number,number]> = {
         aprobado: verdeOk, cerrado_operativo: naranja,
         reabierto: [196, 30, 58], finalizada: naranja,
       }
-      const eColor = estadoColor[c.estado] ?? gris
+      const eColor = estadoColorMap[c.estado] ?? gris
       doc.setFillColor(...eColor)
-      doc.rect(margin, y - 4, 50, 8, "F")
-      texto(estadoLabel[c.estado] ?? c.estado, margin + 2, y + 0.5, 7, true, [255,255,255])
-      y += 10
+      doc.rect(margin, y - 4, 60, 8, "F")
+      texto(estadoLabel[c.estado] ?? c.estado.toUpperCase(), margin + 2, y + 0.5, 7, true, [255,255,255])
+      y += 12
 
-      // Grilla de firmas
+      // Grilla de datos — 3 columnas
       const col1 = margin
-      const col2 = margin + 60
-      const col3 = margin + 120
+      const col2 = margin + 58
+      const col3 = margin + 116
 
-      etiqueta("Creada", new Date(c.created_at).toLocaleDateString("es-AR"), col1, y)
-      etiqueta("Conciliado por", c.firmado_por ?? "—", col2, y)
-      etiqueta("TC cierre", c.tc_cierre ? `$${c.tc_cierre.toLocaleString("es-AR")}` : "—", col3, y)
+      etiqueta("Fecha", new Date(c.created_at).toLocaleDateString("es-AR"), col1, y)
+      etiqueta("Período", c.periodo_label ?? "—", col2, y)
+      etiqueta("Sociedad", sociedad ?? "—", col3, y)
       y += 14
 
-      if (c.cerrado_fecha || c.aprobado_fecha) {
-        etiqueta("Cerrado por operativo", c.cerrado_fecha ? new Date(c.cerrado_fecha).toLocaleString("es-AR") : "—", col1, y)
-        etiqueta("Aprobado por supervisor", c.aprobado_fecha ? new Date(c.aprobado_fecha).toLocaleString("es-AR") : "—", col2, y)
+      etiqueta("Conciliado por", nombreCierre, col1, y)
+      etiqueta("TC cierre", c.tc_cierre && c.tc_cierre > 0 ? `$${c.tc_cierre.toLocaleString("es-AR")}` : "—", col2, y)
+      if (c.cerrado_fecha) {
+        etiqueta("Fecha cierre", new Date(c.cerrado_fecha).toLocaleDateString("es-AR"), col3, y)
+      }
+      y += 14
+
+      if (c.aprobado_fecha) {
+        etiqueta("Aprobado por", nombreAprobacion, col1, y)
+        etiqueta("Fecha aprobación", new Date(c.aprobado_fecha).toLocaleDateString("es-AR"), col2, y)
         if (c.observacion_aprobacion) {
-          etiqueta("Obs. aprobación", c.observacion_aprobacion.substring(0,40), col3, y)
+          etiqueta("Obs.", c.observacion_aprobacion.substring(0, 40), col3, y)
         }
         y += 14
       }
 
-      // Línea de firma
-      lineaH(y, [180,180,180], 0.3)
-      y += 12
+      // Líneas de firma
+      lineaH(y, grisClarito, 0.3)
+      y += 14
       doc.setDrawColor(80,80,80)
       doc.setLineWidth(0.3)
-      doc.line(col1, y, col1 + 50, y)
-      doc.line(col2, y, col2 + 50, y)
-      doc.line(col3, y, col3 + 50, y)
+      doc.line(col1, y, col1 + 52, y)
+      doc.line(col2, y, col2 + 52, y)
+      doc.line(col3, y, col3 + 52, y)
       y += 4
-      texto("Conciliador", col1, y, 7, false, gris)
-      texto("Supervisor", col2, y, 7, false, gris)
-      texto("Fecha", col3, y, 7, false, gris)
+      texto("Conciliador responsable", col1, y, 6.5, false, gris)
+      texto("Supervisor / Aprobador", col2, y, 6.5, false, gris)
+      texto("Fecha", col3, y, 6.5, false, gris)
 
       // Pie de página
-      texto(`Generado por Concilia · ${new Date().toLocaleString("es-AR")}`, W / 2, 290, 7, false, gris)
+      lineaH(288, grisClarito, 0.2)
+      texto(`Generado por Concilia · ${new Date().toLocaleString("es-AR")}`, W / 2, 293, 6.5, false, gris, "center")
 
       // Descargar
-      const nombre = `conciliacion_${c.contrapartes?.nombre ?? "proveedor"}_${c.periodo_label ?? c.id.substring(0,8)}.pdf`
-        .toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_.-]/g, "")
-      doc.save(nombre)
+      const nombreArchivo = [
+        "conciliacion",
+        c.contrapartes?.nombre ?? "proveedor",
+        sociedad ?? "",
+        c.periodo_label ?? c.id.substring(0,8)
+      ].filter(Boolean).join("_")
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/[^a-z0-9_.-]/g, "")
+      doc.save(`${nombreArchivo}.pdf`)
     } catch(e) {
       alert("Error al generar PDF: " + e)
     } finally {

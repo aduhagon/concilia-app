@@ -8,7 +8,7 @@ import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
 import type { AjusteManual, MovimientoResultado, StatusPendiente } from "@/types"
 import { STATUS_LABELS } from "@/types"
-import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User, Lock, Unlock, ChevronDown, History } from "lucide-react"
+import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User, Lock, Unlock, ChevronDown, History, Printer } from "lucide-react"
 
 type Conciliacion = {
   id: string
@@ -178,6 +178,223 @@ export default function DetalleConciliacionPage() {
   const grupos = agruparPorStatus(pendientes)
   const dif = c.diferencia_final_ars ?? 0
   const ok = Math.abs(dif) < 1
+
+  const [generandoPDF, setGenerandoPDF] = useState(false)
+
+  async function generarPDF() {
+    if (!c) return
+    setGenerandoPDF(true)
+    try {
+      const { jsPDF } = await import("jspdf")
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
+
+      const W = 210
+      const margin = 18
+      let y = 20
+
+      // Colores
+      const azul: [number, number, number] = [30, 58, 95]
+      const gris: [number, number, number] = [100, 101, 96]
+      const verdeOk: [number, number, number] = [26, 122, 74]
+      const naranja: [number, number, number] = [212, 88, 10]
+
+      function lineaH(yy: number, color: [number,number,number] = azul, grosor = 0.3) {
+        doc.setDrawColor(...color)
+        doc.setLineWidth(grosor)
+        doc.line(margin, yy, W - margin, yy)
+      }
+
+      function texto(txt: string, x: number, yy: number, size = 9, bold = false, color: [number,number,number] = [30,30,30]) {
+        doc.setFontSize(size)
+        doc.setFont("helvetica", bold ? "bold" : "normal")
+        doc.setTextColor(...color)
+        doc.text(txt, x, yy)
+      }
+
+      function etiqueta(label: string, valor: string, x: number, yy: number) {
+        texto(label.toUpperCase(), x, yy, 7, false, [150,150,140])
+        texto(valor || "—", x, yy + 4.5, 9, false)
+      }
+
+      // ── ENCABEZADO ──
+      doc.setFillColor(...azul)
+      doc.rect(0, 0, W, 28, "F")
+      texto("CONCILIA", margin, 11, 14, true, [255,255,255])
+      texto("Conciliación de cuentas corrientes", margin, 17, 8, false, [160,180,210])
+      texto(`N° ${c.id.substring(0,8).toUpperCase()}`, W - margin, 11, 8, false, [200,210,230])
+      doc.setFontSize(8)
+      doc.setTextColor(200,210,230)
+      doc.text(new Date(c.created_at).toLocaleDateString("es-AR"), W - margin, 17, { align: "right" })
+
+      y = 36
+
+      // ── PROVEEDOR ──
+      doc.setFillColor(240, 242, 248)
+      doc.rect(margin, y, W - margin * 2, 12, "F")
+      texto(c.contrapartes?.nombre ?? "—", margin + 3, y + 5, 12, true, azul)
+      texto(c.periodo_label ?? "", margin + 3, y + 10, 8, false, gris)
+      texto(`TC: $${(c.tc_cierre ?? 0).toLocaleString("es-AR")}`, W - margin - 3, y + 7, 8, false, gris)
+      y += 18
+
+      // ── SALDOS ──
+      lineaH(y, azul, 0.5)
+      y += 5
+      texto("SALDOS", margin, y, 8, true, azul)
+      y += 5
+
+      // Tabla saldos
+      const colSaldo = [margin, margin + 80, margin + 115]
+      texto("", colSaldo[0], y, 7, true, gris)
+      texto("USD", colSaldo[1], y, 7, true, gris)
+      texto("ARS", colSaldo[2], y, 7, true, gris)
+      y += 4
+      lineaH(y, [200,200,200], 0.2)
+      y += 4
+
+      function filaSaldo(label: string, usd: number, ars: number, resaltar = false) {
+        if (resaltar) {
+          doc.setFillColor(255, 243, 199)
+          doc.rect(margin, y - 3, W - margin * 2, 7, "F")
+        }
+        texto(label, colSaldo[0], y, 8, resaltar)
+        doc.setFont("helvetica", "normal")
+        doc.setFontSize(8)
+        doc.setTextColor(30,30,30)
+        doc.text(usd.toLocaleString("es-AR", { minimumFractionDigits: 2 }), colSaldo[1] + 30, y, { align: "right" })
+        doc.text(ars.toLocaleString("es-AR", { minimumFractionDigits: 2 }), colSaldo[2] + 35, y, { align: "right" })
+        y += 7
+      }
+
+      filaSaldo("Saldo s/Gestión (compañía)", c.saldo_final_compania_usd ?? 0, c.saldo_final_compania_ars ?? 0)
+      filaSaldo("Saldo s/Contraparte", c.saldo_final_contraparte_usd ?? 0, c.saldo_final_contraparte_ars ?? 0)
+
+      const difArs = (c.saldo_final_compania_ars ?? 0) - (c.saldo_final_contraparte_ars ?? 0)
+      const difUsd = (c.saldo_final_compania_usd ?? 0) - (c.saldo_final_contraparte_usd ?? 0)
+      lineaH(y - 2, [180,180,180], 0.3)
+      filaSaldo("Diferencia final", difUsd, difArs, true)
+
+      y += 3
+      lineaH(y, azul, 0.5)
+      y += 6
+
+      // ── PENDIENTES ──
+      if (pendientes.length > 0) {
+        texto("COMPOSICIÓN DE LA DIFERENCIA", margin, y, 8, true, azul)
+        y += 6
+
+        const grupos: Record<string, typeof pendientes> = {}
+        for (const m of pendientes) {
+          const k = m.estado_conciliacion || "pendiente"
+          if (!grupos[k]) grupos[k] = []
+          grupos[k].push(m)
+        }
+
+        for (const [status, items] of Object.entries(grupos)) {
+          if (items.length === 0) continue
+          const totalArs = items.reduce((a, m) => a + Number(m.importe_ars || 0), 0)
+          const totalUsd = items.reduce((a, m) => a + Number(m.importe_usd || 0), 0)
+
+          doc.setFillColor(245, 245, 242)
+          doc.rect(margin, y - 3, W - margin * 2, 6, "F")
+          texto(status.toUpperCase().replace(/_/g, " "), margin + 2, y + 1, 7, true, gris)
+          doc.setFontSize(7)
+          doc.setTextColor(...gris)
+          doc.text(`${items.length} comp. | USD ${totalUsd.toLocaleString("es-AR", { minimumFractionDigits: 2 })} | ARS ${totalArs.toLocaleString("es-AR", { minimumFractionDigits: 2 })}`, W - margin - 2, y + 1, { align: "right" })
+          y += 8
+
+          // Filas (máx 15 por grupo)
+          const limite = Math.min(items.length, 15)
+          for (let i = 0; i < limite; i++) {
+            const m = items[i]
+            if (y > 270) { doc.addPage(); y = 20 }
+            doc.setFontSize(7)
+            doc.setFont("helvetica", "normal")
+            doc.setTextColor(60,60,60)
+            const origen = m.origen === "compania" ? "C" : "X"
+            doc.text(origen, margin + 2, y)
+            doc.text(m.fecha ?? "—", margin + 8, y)
+            doc.text((m.tipo_original ?? "").substring(0, 20), margin + 28, y)
+            doc.text((m.comprobante_raw ?? "").substring(0, 22), margin + 75, y)
+            doc.text(Number(m.importe_ars).toLocaleString("es-AR", { minimumFractionDigits: 2 }), W - margin - 2, y, { align: "right" })
+            y += 4.5
+          }
+          if (items.length > 15) {
+            doc.setFontSize(7)
+            doc.setTextColor(...gris)
+            doc.text(`+ ${items.length - 15} más…`, margin + 4, y)
+            y += 5
+          }
+          y += 2
+        }
+      }
+
+      // ── FIRMAS ──
+      if (y > 240) { doc.addPage(); y = 20 }
+      y += 4
+      lineaH(y, azul, 0.5)
+      y += 8
+
+      // Caja de estado
+      const estadoLabel: Record<string, string> = {
+        aprobado: "APROBADA", cerrado_operativo: "CERRADO POR OPERATIVO",
+        reabierto: "REABIERTA", finalizada: "FINALIZADA",
+        en_proceso: "EN PROCESO", borrador: "BORRADOR",
+      }
+      const estadoColor: Record<string, [number,number,number]> = {
+        aprobado: verdeOk, cerrado_operativo: naranja,
+        reabierto: [196, 30, 58], finalizada: naranja,
+      }
+      const eColor = estadoColor[c.estado] ?? gris
+      doc.setFillColor(...eColor)
+      doc.rect(margin, y - 4, 50, 8, "F")
+      texto(estadoLabel[c.estado] ?? c.estado, margin + 2, y + 0.5, 7, true, [255,255,255])
+      y += 10
+
+      // Grilla de firmas
+      const col1 = margin
+      const col2 = margin + 60
+      const col3 = margin + 120
+
+      etiqueta("Creada", new Date(c.created_at).toLocaleDateString("es-AR"), col1, y)
+      etiqueta("Conciliado por", c.firmado_por ?? "—", col2, y)
+      etiqueta("TC cierre", c.tc_cierre ? `$${c.tc_cierre.toLocaleString("es-AR")}` : "—", col3, y)
+      y += 14
+
+      if (c.cerrado_fecha || c.aprobado_fecha) {
+        etiqueta("Cerrado por operativo", c.cerrado_fecha ? new Date(c.cerrado_fecha).toLocaleString("es-AR") : "—", col1, y)
+        etiqueta("Aprobado por supervisor", c.aprobado_fecha ? new Date(c.aprobado_fecha).toLocaleString("es-AR") : "—", col2, y)
+        if (c.observacion_aprobacion) {
+          etiqueta("Obs. aprobación", c.observacion_aprobacion.substring(0,40), col3, y)
+        }
+        y += 14
+      }
+
+      // Línea de firma
+      lineaH(y, [180,180,180], 0.3)
+      y += 12
+      doc.setDrawColor(80,80,80)
+      doc.setLineWidth(0.3)
+      doc.line(col1, y, col1 + 50, y)
+      doc.line(col2, y, col2 + 50, y)
+      doc.line(col3, y, col3 + 50, y)
+      y += 4
+      texto("Conciliador", col1, y, 7, false, gris)
+      texto("Supervisor", col2, y, 7, false, gris)
+      texto("Fecha", col3, y, 7, false, gris)
+
+      // Pie de página
+      texto(`Generado por Concilia · ${new Date().toLocaleString("es-AR")}`, W / 2, 290, 7, false, gris)
+
+      // Descargar
+      const nombre = `conciliacion_${c.contrapartes?.nombre ?? "proveedor"}_${c.periodo_label ?? c.id.substring(0,8)}.pdf`
+        .toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_.-]/g, "")
+      doc.save(nombre)
+    } catch(e) {
+      alert("Error al generar PDF: " + e)
+    } finally {
+      setGenerandoPDF(false)
+    }
+  }
 
   // Permisos según rol y estado
   const esOperativo = usuarioActual?.rol === "operativo"

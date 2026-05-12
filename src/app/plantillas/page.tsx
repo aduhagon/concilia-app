@@ -7,6 +7,8 @@ import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
 import { Plus, Settings, Building2, X, Pencil, Upload, Download, CheckCircle2 } from "lucide-react"
 
+type Usuario = { id: string; nombre: string; rol: string }
+
 type Item = {
   id: string
   nombre: string
@@ -21,6 +23,8 @@ type Item = {
   observaciones: string | null
   activo: boolean
   plantilla_id?: string
+  conciliador_id: string | null
+  conciliador_nombre: string | null
 }
 
 type FormData = {
@@ -35,12 +39,13 @@ type FormData = {
   categoria: string
   observaciones: string
   activo: boolean
+  conciliador_id: string
 }
 
 const FORM_VACIO: FormData = {
   nombre: "", cuit: "", cuenta_interna: "", tipo: "proveedor",
   es_contraparte: false, rubro: "", sociedad: "",
-  grupo_economico: "", categoria: "B", observaciones: "", activo: true,
+  grupo_economico: "", categoria: "B", observaciones: "", activo: true, conciliador_id: "",
 }
 
 const CATEGORIAS = [
@@ -77,12 +82,22 @@ export default function PlantillasPage() {
   const [form, setForm] = useState<FormData>(FORM_VACIO)
   const [importando, setImportando] = useState(false)
   const [importResult, setImportResult] = useState<{ ok: number; errores: string[] } | null>(null)
+  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+
+  useEffect(() => {
+    supabase
+      .from("usuarios")
+      .select("id, nombre, rol")
+      .eq("activo", true)
+      .order("nombre")
+      .then(({ data }) => setUsuarios(data ?? []))
+  }, [])
 
   async function cargar() {
     setLoading(true)
     const { data: contras } = await supabase
       .from("contrapartes")
-      .select("id, nombre, cuit, tipo, categoria, sociedad, grupo_economico, cuenta_interna, rubro, es_contraparte, observaciones, activo, plantillas_proveedor(id)")
+      .select("id, nombre, cuit, tipo, categoria, sociedad, grupo_economico, cuenta_interna, rubro, es_contraparte, observaciones, activo, conciliador_id, plantillas_proveedor(id), usuarios(nombre)")
       .order("nombre")
 
     const items: Item[] = (contras ?? []).map((c: any) => ({
@@ -99,6 +114,8 @@ export default function PlantillasPage() {
       observaciones: c.observaciones,
       activo: c.activo ?? true,
       plantilla_id: c.plantillas_proveedor?.[0]?.id,
+      conciliador_id: c.conciliador_id ?? null,
+      conciliador_nombre: (c.usuarios as any)?.nombre ?? null,
     }))
     setItems(items)
     setLoading(false)
@@ -130,6 +147,7 @@ export default function PlantillasPage() {
       categoria: item.categoria ?? "B",
       observaciones: item.observaciones ?? "",
       activo: item.activo,
+      conciliador_id: item.conciliador_id ?? "",
     })
     setEditando(item)
     setMostrarForm(true)
@@ -160,6 +178,7 @@ export default function PlantillasPage() {
       categoria: form.categoria,
       observaciones: form.observaciones.trim() || null,
       activo: form.activo,
+      conciliador_id: form.conciliador_id || null,
       updated_at: new Date().toISOString(),
     }
 
@@ -471,6 +490,21 @@ export default function PlantillasPage() {
             <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Conciliación</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
+                <label className="label">Conciliador asignado</label>
+                <select
+                  value={form.conciliador_id}
+                  onChange={e => setField("conciliador_id", e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="">— Sin asignar —</option>
+                  {usuarios.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.nombre} ({u.rol})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="label">Categoría *</label>
                 <select
                   value={form.categoria}
@@ -570,6 +604,7 @@ export default function PlantillasPage() {
                     {item.tipo && <span className="capitalize">{item.tipo}</span>}
                     {item.sociedad && <span>{item.sociedad}</span>}
                     {item.cuenta_interna && <span className="font-mono">{item.cuenta_interna}</span>}
+                    {item.conciliador_nombre && <span>👤 {item.conciliador_nombre}</span>}
                     <span>{item.plantilla_id ? "Con plantilla" : "Sin plantilla"}</span>
                   </div>
                 </div>

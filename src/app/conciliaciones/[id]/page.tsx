@@ -27,8 +27,6 @@ type Conciliacion = {
   clasificacion_pendientes: Record<string, StatusPendiente>
   firmado_por: string | null
   firmado_fecha: string | null
-  aprobado_por: string | null
-  aprobado_fecha: string | null
   estado: string
   cerrado_por: string | null
   cerrado_fecha: string | null

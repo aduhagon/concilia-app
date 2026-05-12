@@ -22,6 +22,8 @@ type CuentaEstado = {
   prox_alerta: string | null
   total_conciliaciones: number
   ultima_conciliacion: string | null
+  ultima_conc_id: string | null
+  ultima_conc_estado: string | null
   ultima_diferencia: number | null
   estado: "conciliada" | "pendiente" | "vencida" | "sin_iniciar"
   alerta_semanal: boolean
@@ -112,7 +114,7 @@ export default function SupervisorPage() {
       for (const c of contras ?? []) {
         const { data: ultima } = await supabase
           .from("conciliaciones")
-          .select("id, created_at, diferencia_final_ars")
+          .select("id, created_at, diferencia_final_ars, estado")
           .eq("contraparte_id", c.id)
           .order("created_at", { ascending: false })
           .limit(1)
@@ -146,6 +148,8 @@ export default function SupervisorPage() {
           prox_alerta: c.prox_alerta,
           total_conciliaciones: count ?? 0,
           ultima_conciliacion: ultima?.created_at ?? null,
+          ultima_conc_id: ultima?.id ?? null,
+          ultima_conc_estado: ultima?.estado ?? null,
           ultima_diferencia: ultima?.diferencia_final_ars ?? null,
           estado,
           alerta_semanal: alertaSemanal,
@@ -412,14 +416,38 @@ export default function SupervisorPage() {
                         )}
                       </td>
                       <td className="px-3 py-3">
-                        <Link
-                          href={c.total_conciliaciones > 0
-                            ? `/conciliaciones?contraparte=${c.id}`
-                            : `/nueva?contraparte=${c.id}`}
-                          className="btn btn-secondary text-2xs py-1 px-2"
-                        >
-                          {c.estado === "conciliada" ? "Ver" : "Conciliar"}
-                        </Link>
+                        <div className="flex items-center gap-1.5">
+                          {/* Sin conciliación → botón nueva */}
+                          {!c.ultima_conc_id && (
+                            <Link href={`/nueva?contraparte=${c.id}`} className="btn btn-primary text-2xs py-1 px-2">
+                              + Conciliar
+                            </Link>
+                          )}
+                          {/* En proceso / finalizada → botón Cerrar */}
+                          {c.ultima_conc_id && (c.ultima_conc_estado === "en_proceso" || c.ultima_conc_estado === "borrador" || c.ultima_conc_estado === "finalizada" || c.ultima_conc_estado === "reabierto") && (
+                            <Link href={`/conciliaciones/${c.ultima_conc_id}`} className="btn btn-secondary text-2xs py-1 px-2 text-warn border-warn/30">
+                              Cerrar →
+                            </Link>
+                          )}
+                          {/* Cerrado por operativo → botón Aprobar */}
+                          {c.ultima_conc_id && c.ultima_conc_estado === "cerrado_operativo" && (
+                            <Link href={`/conciliaciones/${c.ultima_conc_id}`} className="btn btn-secondary text-2xs py-1 px-2 text-ok border-ok/30">
+                              Aprobar →
+                            </Link>
+                          )}
+                          {/* Aprobada → botón Ver */}
+                          {c.ultima_conc_id && c.ultima_conc_estado === "aprobado" && (
+                            <Link href={`/conciliaciones/${c.ultima_conc_id}`} className="btn btn-secondary text-2xs py-1 px-2">
+                              Ver ✓
+                            </Link>
+                          )}
+                          {/* Sin estado conocido → botón genérico */}
+                          {c.ultima_conc_id && !["en_proceso","borrador","finalizada","reabierto","cerrado_operativo","aprobado"].includes(c.ultima_conc_estado ?? "") && (
+                            <Link href={`/conciliaciones/${c.ultima_conc_id}`} className="btn btn-secondary text-2xs py-1 px-2">
+                              Ver
+                            </Link>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   )

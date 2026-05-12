@@ -8,7 +8,7 @@ import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
 import type { AjusteManual, MovimientoResultado, StatusPendiente } from "@/types"
 import { STATUS_LABELS } from "@/types"
-import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User } from "lucide-react"
+import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User, Lock, Unlock, ChevronDown, History } from "lucide-react"
 
 type Conciliacion = {
   id: string
@@ -30,8 +30,27 @@ type Conciliacion = {
   aprobado_por: string | null
   aprobado_fecha: string | null
   estado: string
+  cerrado_por: string | null
+  cerrado_fecha: string | null
+  aprobado_por: string | null
+  aprobado_fecha: string | null
+  reabierto_por: string | null
+  reabierto_fecha: string | null
+  observacion_cierre: string | null
+  observacion_aprobacion: string | null
   created_at: string
   contrapartes: { nombre: string } | null
+}
+
+type HistorialItem = {
+  id: string
+  usuario_id: string | null
+  estado_anterior: string | null
+  estado_nuevo: string
+  accion: string
+  observacion: string | null
+  created_at: string
+  usuarios: { nombre: string } | null
 }
 
 type MovGuardado = {
@@ -51,6 +70,14 @@ export default function DetalleConciliacionPage() {
   const [c, setC] = useState<Conciliacion | null>(null)
   const [pendientes, setPendientes] = useState<MovGuardado[]>([])
   const [loading, setLoading] = useState(true)
+  const [historial, setHistorial] = useState<HistorialItem[]>([])
+  const [usuarioActual, setUsuarioActual] = useState<{ id: string; rol: string; nombre: string } | null>(null)
+  const [mostrarHistorial, setMostrarHistorial] = useState(false)
+  const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
+  const [mostrarModalAprobacion, setMostrarModalAprobacion] = useState(false)
+  const [mostrarModalReapertura, setMostrarModalReapertura] = useState(false)
+  const [observacion, setObservacion] = useState("")
+  const [accionando, setAccionando] = useState(false)
 
   useEffect(() => {
     async function cargar() {
@@ -66,12 +93,85 @@ export default function DetalleConciliacionPage() {
         .eq("conciliacion_id", params.id)
         .order("fecha")
 
+      // Cargar historial de estados
+      const { data: hist } = await supabase
+        .from("conciliacion_historial")
+        .select("id, usuario_id, estado_anterior, estado_nuevo, accion, observacion, created_at, usuarios(nombre)")
+        .eq("conciliacion_id", params.id)
+        .order("created_at", { ascending: false })
+
+      // Usuario actual
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data: u } = await supabase
+          .from("usuarios")
+          .select("id, rol, nombre")
+          .eq("id", user.id)
+          .single()
+        if (u) setUsuarioActual(u)
+      }
+
       setC(cab as unknown as Conciliacion)
       setPendientes((movs ?? []) as unknown as MovGuardado[])
+      setHistorial((hist ?? []) as unknown as HistorialItem[])
       setLoading(false)
     }
     cargar()
   }, [params.id])
+
+  async function ejecutarAccion(accion: "cerrado_operativo" | "aprobado" | "reabierto") {
+    if (!c || !usuarioActual) return
+    setAccionando(true)
+
+    const estadoAnterior = c.estado
+    const ahora = new Date().toISOString()
+
+    const updates: Record<string, unknown> = { estado: accion }
+    if (accion === "cerrado_operativo") {
+      updates.cerrado_por = usuarioActual.id
+      updates.cerrado_fecha = ahora
+      updates.observacion_cierre = observacion || null
+    } else if (accion === "aprobado") {
+      updates.aprobado_por = usuarioActual.id
+      updates.aprobado_fecha = ahora
+      updates.observacion_aprobacion = observacion || null
+    } else if (accion === "reabierto") {
+      updates.reabierto_por = usuarioActual.id
+      updates.reabierto_fecha = ahora
+    }
+
+    await supabase.from("conciliaciones").update(updates).eq("id", c.id)
+
+    // Registrar en historial
+    await supabase.from("conciliacion_historial").insert({
+      conciliacion_id: c.id,
+      usuario_id: usuarioActual.id,
+      estado_anterior: estadoAnterior,
+      estado_nuevo: accion,
+      accion,
+      observacion: observacion || null,
+    })
+
+    // Recargar
+    const { data: cab } = await supabase
+      .from("conciliaciones")
+      .select("*, contrapartes(nombre)")
+      .eq("id", c.id)
+      .single()
+    const { data: hist } = await supabase
+      .from("conciliacion_historial")
+      .select("id, usuario_id, estado_anterior, estado_nuevo, accion, observacion, created_at, usuarios(nombre)")
+      .eq("conciliacion_id", c.id)
+      .order("created_at", { ascending: false })
+
+    setC(cab as unknown as Conciliacion)
+    setHistorial((hist ?? []) as unknown as HistorialItem[])
+    setObservacion("")
+    setMostrarModalCierre(false)
+    setMostrarModalAprobacion(false)
+    setMostrarModalReapertura(false)
+    setAccionando(false)
+  }
 
   if (loading) return <div className="text-sm text-ink-400 text-center py-8">Cargando...</div>
   if (!c) return <div className="text-sm text-error text-center py-8">No se encontró la conciliación</div>
@@ -80,6 +180,23 @@ export default function DetalleConciliacionPage() {
   const grupos = agruparPorStatus(pendientes)
   const dif = c.diferencia_final_ars ?? 0
   const ok = Math.abs(dif) < 1
+
+  // Permisos según rol y estado
+  const esOperativo = usuarioActual?.rol === "operativo"
+  const esSupervisor = usuarioActual?.rol === "supervisor" || usuarioActual?.rol === "admin"
+  const puedeOperativoCerrar = esOperativo && (c.estado === "en_proceso" || c.estado === "borrador" || c.estado === "finalizada" || c.estado === "reabierto")
+  const puedeSupervisorAprobar = esSupervisor && c.estado === "cerrado_operativo"
+  const puedeSupervisorReabrir = esSupervisor && (c.estado === "cerrado_operativo" || c.estado === "aprobado")
+
+  const ESTADO_CONFIG: Record<string, { label: string; color: string }> = {
+    borrador: { label: "Borrador", color: "bg-ink-100 text-ink-500" },
+    en_proceso: { label: "En proceso", color: "bg-info-light text-info" },
+    finalizada: { label: "Finalizada", color: "bg-warn-light text-warn" },
+    cerrado_operativo: { label: "Cerrado por operativo", color: "bg-warn-light text-warn" },
+    aprobado: { label: "Aprobado", color: "bg-ok-light text-ok" },
+    reabierto: { label: "Reabierto", color: "bg-danger-light text-danger" },
+  }
+  const estadoCfg = ESTADO_CONFIG[c.estado] ?? { label: c.estado, color: "bg-ink-100 text-ink-500" }
 
   return (
     <div className="px-6 py-6 space-y-6 max-w-5xl mx-auto">
@@ -93,9 +210,15 @@ export default function DetalleConciliacionPage() {
             {c.contrapartes?.nombre}
             {c.periodo_label && <span className="text-ink-500 text-2xl ml-2">· {c.periodo_label}</span>}
           </h1>
-          <div className={`badge ${ok ? "badge-ok" : "badge-warn"} text-xs`}>
-            {ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-            {ok ? "Conciliada" : "Con diferencia"}
+          <div className="flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full ${estadoCfg.color}`}>
+              {c.estado === "aprobado" ? <CheckCircle2 size={12} /> : c.estado === "cerrado_operativo" ? <Lock size={12} /> : <AlertCircle size={12} />}
+              {estadoCfg.label}
+            </span>
+            <div className={`badge ${ok ? "badge-ok" : "badge-warn"} text-xs`}>
+              {ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+              {ok ? "Sin diferencia" : "Con diferencia"}
+            </div>
           </div>
         </div>
       </div>
@@ -244,6 +367,168 @@ export default function DetalleConciliacionPage() {
           </div>
         </div>
       </div>
+      {/* ── ACCIONES DE CIERRE ── */}
+      <div className="card space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold">Estado y firmas</div>
+          <button
+            onClick={() => setMostrarHistorial(v => !v)}
+            className="text-2xs text-ink-500 hover:text-accent flex items-center gap-1"
+          >
+            <History size={12} /> Historial {mostrarHistorial ? "▲" : "▼"}
+          </button>
+        </div>
+
+        {/* Firmas actuales */}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs">
+          <div>
+            <div className="text-2xs text-ink-400 mb-1">Cerrado por operativo</div>
+            {c.cerrado_por ? (
+              <div>
+                <div className="font-semibold text-ink-800">{c.firmado_por ?? "—"}</div>
+                <div className="text-2xs text-ink-400">{c.cerrado_fecha ? new Date(c.cerrado_fecha).toLocaleString("es-AR") : "—"}</div>
+              </div>
+            ) : <div className="text-ink-300 italic">Pendiente</div>}
+          </div>
+          <div>
+            <div className="text-2xs text-ink-400 mb-1">Aprobado por supervisor</div>
+            {c.aprobado_por ? (
+              <div>
+                <div className="font-semibold text-ok">{c.aprobado_por ?? "—"}</div>
+                <div className="text-2xs text-ink-400">{c.aprobado_fecha ? new Date(c.aprobado_fecha).toLocaleString("es-AR") : "—"}</div>
+              </div>
+            ) : <div className="text-ink-300 italic">Pendiente</div>}
+          </div>
+          {c.observacion_aprobacion && (
+            <div>
+              <div className="text-2xs text-ink-400 mb-1">Obs. aprobación</div>
+              <div className="text-ink-700">{c.observacion_aprobacion}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Botones de acción */}
+        <div className="flex items-center gap-3 pt-2 border-t border-ink-200">
+          {puedeOperativoCerrar && (
+            <button
+              onClick={() => setMostrarModalCierre(true)}
+              className="btn btn-primary flex items-center gap-2"
+            >
+              <Lock size={14} /> Cerrar conciliación
+            </button>
+          )}
+          {puedeSupervisorAprobar && (
+            <button
+              onClick={() => setMostrarModalAprobacion(true)}
+              className="btn btn-primary flex items-center gap-2"
+              style={{ background: "#1A7A4A" }}
+            >
+              <CheckCircle2 size={14} /> Aprobar conciliación
+            </button>
+          )}
+          {puedeSupervisorReabrir && (
+            <button
+              onClick={() => setMostrarModalReapertura(true)}
+              className="btn btn-secondary flex items-center gap-2 text-danger"
+            >
+              <Unlock size={14} /> Reabrir
+            </button>
+          )}
+          {!puedeOperativoCerrar && !puedeSupervisorAprobar && !puedeSupervisorReabrir && (
+            <div className="text-2xs text-ink-400 italic">
+              {c.estado === "aprobado" ? "✓ Conciliación aprobada y cerrada" : "No tenés permisos para modificar esta conciliación"}
+            </div>
+          )}
+        </div>
+
+        {/* Historial de estados */}
+        {mostrarHistorial && (
+          <div className="border-t border-ink-200 pt-3 space-y-2">
+            <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold mb-2">Log de cambios</div>
+            {historial.length === 0 ? (
+              <div className="text-2xs text-ink-400 italic">Sin registros</div>
+            ) : (
+              historial.map(h => (
+                <div key={h.id} className="flex items-start gap-3 text-xs py-2 border-b border-ink-100 last:border-0">
+                  <div className="w-1.5 h-1.5 rounded-full bg-accent mt-1.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">{(h.usuarios as any)?.nombre ?? "Sistema"}</span>
+                      <span className="text-ink-400">→</span>
+                      <span className={`text-2xs font-semibold px-1.5 py-0.5 rounded ${ESTADO_CONFIG[h.estado_nuevo]?.color ?? "bg-ink-100 text-ink-500"}`}>
+                        {ESTADO_CONFIG[h.estado_nuevo]?.label ?? h.estado_nuevo}
+                      </span>
+                    </div>
+                    {h.observacion && <div className="text-ink-500 mt-0.5">{h.observacion}</div>}
+                    <div className="text-2xs text-ink-400 mt-0.5">{new Date(h.created_at).toLocaleString("es-AR")}</div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Modal cierre operativo */}
+      {mostrarModalCierre && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl space-y-4">
+            <div className="text-base font-semibold">Cerrar conciliación</div>
+            <p className="text-sm text-ink-600">Una vez cerrada, ningún operativo podrá modificarla. El supervisor podrá revisarla y aprobarla o reabrirla.</p>
+            <div>
+              <label className="label">Observación (opcional)</label>
+              <textarea value={observacion} onChange={e => setObservacion(e.target.value)} className="input w-full h-20 resize-none" placeholder="Notas para el supervisor…" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setMostrarModalCierre(false)} className="btn btn-secondary">Cancelar</button>
+              <button onClick={() => ejecutarAccion("cerrado_operativo")} disabled={accionando} className="btn btn-primary disabled:opacity-40">
+                <Lock size={13} /> {accionando ? "Cerrando…" : "Confirmar cierre"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal aprobación supervisor */}
+      {mostrarModalAprobacion && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl space-y-4">
+            <div className="text-base font-semibold">Aprobar conciliación</div>
+            <p className="text-sm text-ink-600">Al aprobar, la conciliación queda cerrada y firmada con tu nombre y fecha.</p>
+            <div>
+              <label className="label">Observación (opcional)</label>
+              <textarea value={observacion} onChange={e => setObservacion(e.target.value)} className="input w-full h-20 resize-none" placeholder="Comentarios de la revisión…" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setMostrarModalAprobacion(false)} className="btn btn-secondary">Cancelar</button>
+              <button onClick={() => ejecutarAccion("aprobado")} disabled={accionando} className="btn btn-primary disabled:opacity-40" style={{ background: "#1A7A4A" }}>
+                <CheckCircle2 size={13} /> {accionando ? "Aprobando…" : "Aprobar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal reapertura */}
+      {mostrarModalReapertura && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl space-y-4">
+            <div className="text-base font-semibold">Reabrir conciliación</div>
+            <p className="text-sm text-ink-600">La reapertura queda registrada en el log. Podés modificarla y volver a cerrarla.</p>
+            <div>
+              <label className="label">Motivo de reapertura *</label>
+              <textarea value={observacion} onChange={e => setObservacion(e.target.value)} className="input w-full h-20 resize-none" placeholder="Explicá por qué se reabre…" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setMostrarModalReapertura(false)} className="btn btn-secondary">Cancelar</button>
+              <button onClick={() => ejecutarAccion("reabierto")} disabled={accionando || !observacion.trim()} className="btn btn-secondary text-danger disabled:opacity-40">
+                <Unlock size={13} /> {accionando ? "Reabriendo…" : "Reabrir"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

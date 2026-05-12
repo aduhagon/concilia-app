@@ -110,6 +110,7 @@ export default function DynamicHeader() {
               { href: "/historial-categorias", label: "Hist. categorías" },
               { href: "/usuarios", label: "Usuarios" },
               { href: "/tipos-cambio", label: "Tipos de cambio" },
+              { href: "/sociedades", label: "Sociedades" },
               { href: "/configuracion", label: "Configuración" },
       
             ].map(({ href, label }) => (

@@ -189,7 +189,7 @@ export default function DetalleConciliacionPage() {
    c.estado === "finalizada" || c.estado === "reabierto" ||
    c.estado === "cerrado_operativo")
 
-const puedeSupervisorAprobar = esSupervisor && c.estado === "cerrado_operativo"
+
   const puedeSupervisorAprobar = esSupervisor && c.estado === "cerrado_operativo"
   const puedeSupervisorReabrir = esSupervisor && (c.estado === "cerrado_operativo" || c.estado === "aprobado")
 

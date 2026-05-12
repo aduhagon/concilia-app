@@ -439,6 +439,14 @@ export default function DetalleConciliacionPage() {
               {ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
               {ok ? "Sin diferencia" : "Con diferencia"}
             </div>
+            <button
+              onClick={generarPDF}
+              disabled={generandoPDF}
+              className="btn btn-secondary flex items-center gap-1.5 text-xs disabled:opacity-40"
+            >
+              <Printer size={13} />
+              {generandoPDF ? "Generando…" : "Descargar PDF"}
+            </button>
           </div>
         </div>
       </div>
@@ -449,7 +457,7 @@ export default function DetalleConciliacionPage() {
           <Dato label="Conciliada el" valor={new Date(c.created_at).toLocaleDateString("es-AR")} icon={<Calendar size={11} />} />
           <Dato label="TC Cierre" valor={c.tc_cierre?.toLocaleString("es-AR", { maximumFractionDigits: 4 })} />
           <Dato label="Conciliado por" valor={c.firmado_por ?? "—"} icon={<User size={11} />} />
-          <Dato label="Aprobado por" valor={c.aprobado_por ?? "—"} icon={<User size={11} />} />
+          <Dato label="Aprobado por" valor={historial.find(h => h.accion === "aprobado") ? ((historial.find(h => h.accion === "aprobado") as any)?.usuarios?.nombre ?? "—") : (c.aprobado_por ? "Aprobado" : "—")} icon={<User size={11} />} />
         </div>
       </div>
 

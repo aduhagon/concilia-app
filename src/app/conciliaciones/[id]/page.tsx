@@ -76,6 +76,7 @@ export default function DetalleConciliacionPage() {
   const [mostrarModalReapertura, setMostrarModalReapertura] = useState(false)
   const [observacion, setObservacion] = useState("")
   const [accionando, setAccionando] = useState(false)
+  const [generandoPDF, setGenerandoPDF] = useState(false)
 
   useEffect(() => {
     async function cargar() {
@@ -179,7 +180,6 @@ export default function DetalleConciliacionPage() {
   const dif = c.diferencia_final_ars ?? 0
   const ok = Math.abs(dif) < 1
 
-  const [generandoPDF, setGenerandoPDF] = useState(false)
 
   async function generarPDF() {
     if (!c) return

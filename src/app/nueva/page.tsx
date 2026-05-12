@@ -22,6 +22,7 @@ import { useShortcuts } from "@/lib/use-shortcuts"
 import { useToast } from "@/components/Toast"
 
 type Contraparte = { id: string; nombre: string }
+type CuentaProveedor = { id: string; sociedad_nombre: string; cuenta_interna: string; descripcion: string | null }
 
 const SALDOS_VACIOS: SaldosBilaterales = {
   inicial_compania_ars: 0, inicial_compania_usd: 0,
@@ -33,6 +34,8 @@ const SALDOS_VACIOS: SaldosBilaterales = {
 
 export default function NuevaConciliacionPage() {
   const [contrapartes, setContrapartes] = useState<Contraparte[]>([])
+  const [cuentasProveedor, setCuentasProveedor] = useState<CuentaProveedor[]>([])
+  const [cuentaProveedorId, setCuentaProveedorId, clearCuentaProveedorId] = usePersistedState<string>("nueva-cuenta-proveedor-id", "")
   const [contraparteId, setContraparteId, clearContraparteId] = usePersistedState<string>("nueva-contraparte-id", "")
   // Persistir todo lo crítico del usuario
   const [periodoLabel, setPeriodoLabel, clearPeriodo] = usePersistedState<string>("nueva-periodo", "")
@@ -75,8 +78,28 @@ export default function NuevaConciliacionPage() {
     if (!contraparteId) {
       setPlantilla(null)
       setUltimaConc(null)
+      setCuentasProveedor([])
+      setCuentaProveedorId("")
       return
     }
+    // Cargar cuentas por sociedad del proveedor
+    supabase
+      .from("cuentas_proveedor")
+      .select("id, cuenta_interna, descripcion, sociedad_id, sociedades(nombre)")
+      .eq("contraparte_id", contraparteId)
+      .eq("activo", true)
+      .order("cuenta_interna")
+      .then(({ data }) => {
+        setCuentasProveedor((data ?? []).map((c: any) => ({
+          id: c.id,
+          sociedad_nombre: c.sociedades?.nombre ?? "—",
+          cuenta_interna: c.cuenta_interna,
+          descripcion: c.descripcion,
+        })))
+        // Si solo hay una cuenta, seleccionarla automáticamente
+        if (data?.length === 1) setCuentaProveedorId(data[0].id)
+        else setCuentaProveedorId("")
+      })
     supabase.from("plantillas_proveedor").select("*").eq("contraparte_id", contraparteId).single().then(({ data }) => {
       if (data) {
         setPlantilla({
@@ -151,6 +174,7 @@ export default function NuevaConciliacionPage() {
       .from("conciliaciones")
       .insert({
         contraparte_id: contraparteId,
+        cuenta_proveedor_id: cuentaProveedorId || null,
         periodo_label: periodoLabel,
         saldo_inicial_compania_ars: saldos.inicial_compania_ars,
         saldo_inicial_compania_usd: saldos.inicial_compania_usd,
@@ -214,6 +238,7 @@ export default function NuevaConciliacionPage() {
     // Limpiar el borrador después de guardar exitoso
     setTimeout(() => {
       clearContraparteId()
+      clearCuentaProveedorId()
       clearPeriodo()
       clearSaldos()
       clearClasif()
@@ -260,6 +285,7 @@ export default function NuevaConciliacionPage() {
   // Limpiar todo el borrador (después de guardar exitosamente o por acción del usuario)
   function limpiarBorrador() {
     clearContraparteId()
+    clearCuentaProveedorId()
     clearPeriodo()
     clearSaldos()
     clearClasif()
@@ -319,6 +345,31 @@ export default function NuevaConciliacionPage() {
             <option key={c.id} value={c.id}>{c.nombre}</option>
           ))}
         </select>
+        {/* Selector de cuenta por sociedad */}
+        {contraparteId && cuentasProveedor.length > 0 && (
+          <div className="mt-3">
+            <label className="label">Sociedad / Cuenta corriente *</label>
+            <select
+              value={cuentaProveedorId}
+              onChange={e => setCuentaProveedorId(e.target.value)}
+              className="input"
+            >
+              <option value="">— elegir cuenta —</option>
+              {cuentasProveedor.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.sociedad_nombre} · {c.cuenta_interna}{c.descripcion ? ` (${c.descripcion})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {contraparteId && cuentasProveedor.length === 0 && (
+          <div className="mt-3 text-2xs text-warn flex items-center gap-1">
+            <AlertCircle size={12} /> Este proveedor no tiene cuentas asignadas.
+            <a href="/plantillas" className="underline ml-1">Ir a Plantillas →</a>
+          </div>
+        )}
+
         {plantilla && reglasFaltantes && (
           <Aviso variant="warn">La plantilla no tiene reglas configuradas. Andá a Plantillas para configurarla.</Aviso>
         )}
@@ -330,7 +381,7 @@ export default function NuevaConciliacionPage() {
         )}
       </section>
 
-      {plantilla && !reglasFaltantes && !mapeoIncompleto && (
+      {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && (
         <section>
           <div className="flex items-center gap-2 mb-2 px-1">
             <PasoNum num="2" />
@@ -347,7 +398,7 @@ export default function NuevaConciliacionPage() {
         </section>
       )}
 
-      {plantilla && !reglasFaltantes && !mapeoIncompleto && (
+      {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && (
         <section className="space-y-2">
           <div className="flex items-center gap-2 mb-2 px-1">
             <PasoNum num="3" />
@@ -360,7 +411,7 @@ export default function NuevaConciliacionPage() {
         </section>
       )}
 
-      {plantilla && !reglasFaltantes && !mapeoIncompleto && (
+      {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && (
         <div className="flex justify-center py-2">
           <button
             onClick={ejecutar}
@@ -372,7 +423,7 @@ export default function NuevaConciliacionPage() {
           </button>
         </div>
       )}
-      {plantilla && !reglasFaltantes && !mapeoIncompleto && !archivoCmp && !archivoCont && !procesando && (
+      {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && !archivoCmp && !archivoCont && !procesando && (
         <div className="text-center text-2xs text-ink-500">
           Subí los dos archivos (compañía y contraparte) para habilitar la conciliación
         </div>

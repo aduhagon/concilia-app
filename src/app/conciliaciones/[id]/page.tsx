@@ -184,7 +184,12 @@ export default function DetalleConciliacionPage() {
   // Permisos según rol y estado
   const esOperativo = usuarioActual?.rol === "operativo"
   const esSupervisor = usuarioActual?.rol === "supervisor" || usuarioActual?.rol === "admin"
-  const puedeOperativoCerrar = esOperativo && (c.estado === "en_proceso" || c.estado === "borrador" || c.estado === "finalizada" || c.estado === "reabierto")
+  const puedeOperativoCerrar = (esOperativo || esSupervisor) && 
+  (c.estado === "en_proceso" || c.estado === "borrador" || 
+   c.estado === "finalizada" || c.estado === "reabierto" ||
+   c.estado === "cerrado_operativo")
+
+const puedeSupervisorAprobar = esSupervisor && c.estado === "cerrado_operativo"
   const puedeSupervisorAprobar = esSupervisor && c.estado === "cerrado_operativo"
   const puedeSupervisorReabrir = esSupervisor && (c.estado === "cerrado_operativo" || c.estado === "aprobado")
 

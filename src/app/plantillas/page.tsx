@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
-import { Plus, Settings, Building2, X, Pencil, Upload, Download, CheckCircle2 } from "lucide-react"
+import { Plus, Settings, Building2, X, Pencil, Upload, Download, CheckCircle2, Users } from "lucide-react"
 
 type Usuario = { id: string; nombre: string; rol: string }
 
@@ -83,15 +83,35 @@ export default function PlantillasPage() {
   const [importando, setImportando] = useState(false)
   const [importResult, setImportResult] = useState<{ ok: number; errores: string[] } | null>(null)
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [rolActual, setRolActual] = useState<string | null>(null)
+
+  // Selección múltiple
+  const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set())
+  const [conciliadorMasivo, setConciliadorMasivo] = useState("")
+  const [asignando, setAsignando] = useState(false)
 
   useEffect(() => {
+    // Cargar usuarios activos
     supabase
       .from("usuarios")
       .select("id, nombre, rol")
       .eq("activo", true)
       .order("nombre")
       .then(({ data }) => setUsuarios(data ?? []))
+
+    // Obtener rol del usuario actual
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      supabase
+        .from("usuarios")
+        .select("rol")
+        .eq("id", user.id)
+        .single()
+        .then(({ data }) => setRolActual(data?.rol ?? null))
+    })
   }, [])
+
+  const puedeAsignar = rolActual === "admin" || rolActual === "supervisor"
 
   async function cargar() {
     setLoading(true)
@@ -132,6 +152,7 @@ export default function PlantillasPage() {
     setEditando(null)
     setMostrarForm(true)
     setImportResult(null)
+    setSeleccionados(new Set())
   }
 
   function abrirEditar(item: Item) {
@@ -152,7 +173,7 @@ export default function PlantillasPage() {
     setEditando(item)
     setMostrarForm(true)
     setImportResult(null)
-    // Scroll al formulario
+    setSeleccionados(new Set())
     setTimeout(() => document.getElementById("form-cuenta")?.scrollIntoView({ behavior: "smooth" }), 100)
   }
 
@@ -160,6 +181,49 @@ export default function PlantillasPage() {
     setMostrarForm(false)
     setEditando(null)
     setForm(FORM_VACIO)
+  }
+
+  // Toggle selección individual
+  function toggleSeleccion(id: string) {
+    setSeleccionados(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Seleccionar / deseleccionar todos los filtrados
+  function toggleTodos() {
+    if (seleccionados.size === itemsFiltrados.length) {
+      setSeleccionados(new Set())
+    } else {
+      setSeleccionados(new Set(itemsFiltrados.map(i => i.id)))
+    }
+  }
+
+  // Asignación masiva
+  async function asignarConciliadorMasivo() {
+    if (!conciliadorMasivo || seleccionados.size === 0) return
+    setAsignando(true)
+
+    const ids = Array.from(seleccionados)
+    const { error } = await supabase
+      .from("contrapartes")
+      .update({
+        conciliador_id: conciliadorMasivo || null,
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", ids)
+
+    if (error) {
+      alert("Error al asignar: " + error.message)
+    } else {
+      setSeleccionados(new Set())
+      setConciliadorMasivo("")
+      cargar()
+    }
+    setAsignando(false)
   }
 
   async function guardar() {
@@ -183,7 +247,6 @@ export default function PlantillasPage() {
     }
 
     if (editando) {
-      // EDITAR
       const { error } = await supabase
         .from("contrapartes")
         .update(payload)
@@ -192,7 +255,6 @@ export default function PlantillasPage() {
       if (error) {
         alert("Error al guardar: " + error.message)
       } else {
-        // Registrar cambio de categoría si cambió
         if (editando.categoria !== form.categoria) {
           const { data: { user } } = await supabase.auth.getUser()
           await supabase.from("historial_categorias").insert({
@@ -207,7 +269,6 @@ export default function PlantillasPage() {
         cargar()
       }
     } else {
-      // CREAR
       const { data: empresa } = await supabase.from("empresas").select("id").limit(1).single()
       const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
 
@@ -228,7 +289,6 @@ export default function PlantillasPage() {
     setGuardando(false)
   }
 
-  // Importación masiva desde Excel
   async function importarExcel(file: File) {
     setImportando(true)
     setImportResult(null)
@@ -298,6 +358,9 @@ export default function PlantillasPage() {
     (i.sociedad ?? "").toLowerCase().includes(filtro.toLowerCase())
   )
 
+  const todosSeleccionados = itemsFiltrados.length > 0 && seleccionados.size === itemsFiltrados.length
+  const algunoSeleccionado = seleccionados.size > 0
+
   return (
     <div className="px-6 py-6 space-y-6">
 
@@ -311,7 +374,6 @@ export default function PlantillasPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Importar desde Excel */}
           <label className="btn btn-secondary cursor-pointer">
             <Upload size={14} />
             {importando ? "Importando…" : "Importar Excel"}
@@ -323,14 +385,10 @@ export default function PlantillasPage() {
               disabled={importando}
             />
           </label>
-          {/* Descargar plantilla */}
           <a
             href="/plantilla-cuentas.xlsx"
             className="btn btn-secondary"
-            onClick={e => {
-              e.preventDefault()
-              descargarPlantilla()
-            }}
+            onClick={e => { e.preventDefault(); descargarPlantilla() }}
           >
             <Download size={14} /> Plantilla
           </a>
@@ -358,9 +416,7 @@ export default function PlantillasPage() {
               </ul>
             )}
           </div>
-          <button onClick={() => setImportResult(null)} className="ml-auto">
-            <X size={14} />
-          </button>
+          <button onClick={() => setImportResult(null)} className="ml-auto"><X size={14} /></button>
         </div>
       )}
 
@@ -382,32 +438,15 @@ export default function PlantillasPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="label">Razón social *</label>
-                <input
-                  value={form.nombre}
-                  onChange={e => setField("nombre", e.target.value)}
-                  placeholder="Nombre completo"
-                  className="input w-full"
-                  autoFocus
-                />
+                <input value={form.nombre} onChange={e => setField("nombre", e.target.value)} placeholder="Nombre completo" className="input w-full" autoFocus />
               </div>
               <div>
                 <label className="label">CUIT</label>
-                <input
-                  value={form.cuit}
-                  onChange={e => setField("cuit", e.target.value)}
-                  placeholder="30712345678"
-                  className="input w-full font-mono"
-                  maxLength={11}
-                />
+                <input value={form.cuit} onChange={e => setField("cuit", e.target.value)} placeholder="30712345678" className="input w-full font-mono" maxLength={11} />
               </div>
               <div>
                 <label className="label">N° cuenta sistema</label>
-                <input
-                  value={form.cuenta_interna}
-                  onChange={e => setField("cuenta_interna", e.target.value)}
-                  placeholder="CTA-001"
-                  className="input w-full font-mono"
-                />
+                <input value={form.cuenta_interna} onChange={e => setField("cuenta_interna", e.target.value)} placeholder="CTA-001" className="input w-full font-mono" />
               </div>
             </div>
           </div>
@@ -420,16 +459,8 @@ export default function PlantillasPage() {
                 <label className="label">Tipo de cuenta *</label>
                 <div className="flex gap-2">
                   {["proveedor", "cliente"].map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setField("tipo", t)}
-                      className={`flex-1 py-2 text-xs font-semibold border rounded transition-all capitalize ${
-                        form.tipo === t
-                          ? "bg-accent text-white border-accent"
-                          : "border-ink-200 text-ink-600 hover:border-accent"
-                      }`}
-                    >
+                    <button key={t} type="button" onClick={() => setField("tipo", t)}
+                      className={`flex-1 py-2 text-xs font-semibold border rounded transition-all capitalize ${form.tipo === t ? "bg-accent text-white border-accent" : "border-ink-200 text-ink-600 hover:border-accent"}`}>
                       {t}
                     </button>
                   ))}
@@ -437,22 +468,13 @@ export default function PlantillasPage() {
               </div>
               <div className="flex items-end pb-1">
                 <label className="flex items-center gap-2 cursor-pointer text-sm">
-                  <input
-                    type="checkbox"
-                    checked={form.es_contraparte}
-                    onChange={e => setField("es_contraparte", e.target.checked)}
-                    className="w-4 h-4 accent-accent"
-                  />
+                  <input type="checkbox" checked={form.es_contraparte} onChange={e => setField("es_contraparte", e.target.checked)} className="w-4 h-4 accent-accent" />
                   <span>¿Opera también como {form.tipo === "proveedor" ? "cliente" : "proveedor"}?</span>
                 </label>
               </div>
               <div>
                 <label className="label">Rubro</label>
-                <select
-                  value={form.rubro}
-                  onChange={e => setField("rubro", e.target.value)}
-                  className="input w-full"
-                >
+                <select value={form.rubro} onChange={e => setField("rubro", e.target.value)} className="input w-full">
                   <option value="">— Seleccioná —</option>
                   {RUBROS.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
@@ -466,21 +488,11 @@ export default function PlantillasPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="label">Sociedad</label>
-                <input
-                  value={form.sociedad}
-                  onChange={e => setField("sociedad", e.target.value)}
-                  placeholder="Ej: Sociedad A"
-                  className="input w-full"
-                />
+                <input value={form.sociedad} onChange={e => setField("sociedad", e.target.value)} placeholder="Ej: Sociedad A" className="input w-full" />
               </div>
               <div>
                 <label className="label">Grupo económico</label>
-                <input
-                  value={form.grupo_economico}
-                  onChange={e => setField("grupo_economico", e.target.value)}
-                  placeholder="Si pertenece a un grupo"
-                  className="input w-full"
-                />
+                <input value={form.grupo_economico} onChange={e => setField("grupo_economico", e.target.value)} placeholder="Si pertenece a un grupo" className="input w-full" />
               </div>
             </div>
           </div>
@@ -491,49 +503,27 @@ export default function PlantillasPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="label">Conciliador asignado</label>
-                <select
-                  value={form.conciliador_id}
-                  onChange={e => setField("conciliador_id", e.target.value)}
-                  className="input w-full"
-                >
+                <select value={form.conciliador_id} onChange={e => setField("conciliador_id", e.target.value)} className="input w-full">
                   <option value="">— Sin asignar —</option>
                   {usuarios.map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.nombre} ({u.rol})
-                    </option>
+                    <option key={u.id} value={u.id}>{u.nombre} ({u.rol})</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="label">Categoría *</label>
-                <select
-                  value={form.categoria}
-                  onChange={e => setField("categoria", e.target.value)}
-                  className="input w-full"
-                >
-                  {CATEGORIAS.map(c => (
-                    <option key={c.value} value={c.value}>{c.label}</option>
-                  ))}
+                <select value={form.categoria} onChange={e => setField("categoria", e.target.value)} className="input w-full">
+                  {CATEGORIAS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                 </select>
               </div>
               <div>
                 <label className="label">Observaciones</label>
-                <input
-                  value={form.observaciones}
-                  onChange={e => setField("observaciones", e.target.value)}
-                  placeholder="Notas internas opcionales"
-                  className="input w-full"
-                />
+                <input value={form.observaciones} onChange={e => setField("observaciones", e.target.value)} placeholder="Notas internas opcionales" className="input w-full" />
               </div>
               {editando && (
                 <div className="flex items-end pb-1">
                   <label className="flex items-center gap-2 cursor-pointer text-sm">
-                    <input
-                      type="checkbox"
-                      checked={form.activo}
-                      onChange={e => setField("activo", e.target.checked)}
-                      className="w-4 h-4 accent-accent"
-                    />
+                    <input type="checkbox" checked={form.activo} onChange={e => setField("activo", e.target.checked)} className="w-4 h-4 accent-accent" />
                     <span>Cuenta activa</span>
                   </label>
                 </div>
@@ -543,28 +533,32 @@ export default function PlantillasPage() {
 
           {/* Acciones */}
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-ink-200">
-            <button onClick={cerrarForm} className="btn btn-secondary">
-              Cancelar
-            </button>
-            <button
-              onClick={guardar}
-              disabled={guardando || !form.nombre.trim()}
-              className="btn btn-primary disabled:opacity-40"
-            >
+            <button onClick={cerrarForm} className="btn btn-secondary">Cancelar</button>
+            <button onClick={guardar} disabled={guardando || !form.nombre.trim()} className="btn btn-primary disabled:opacity-40">
               {guardando ? "Guardando…" : editando ? "Guardar cambios" : "Crear cuenta"}
             </button>
           </div>
         </div>
       )}
 
-      {/* Buscador */}
+      {/* Buscador + selector todos */}
       {items.length > 0 && (
-        <input
-          value={filtro}
-          onChange={e => setFiltro(e.target.value)}
-          placeholder="Buscar por nombre, CUIT o sociedad…"
-          className="input w-full max-w-sm"
-        />
+        <div className="flex items-center gap-3">
+          <input
+            value={filtro}
+            onChange={e => setFiltro(e.target.value)}
+            placeholder="Buscar por nombre, CUIT o sociedad…"
+            className="input w-full max-w-sm"
+          />
+          {puedeAsignar && (
+            <div className="text-2xs text-ink-400">
+              {seleccionados.size > 0
+                ? `${seleccionados.size} cuenta${seleccionados.size > 1 ? "s" : ""} seleccionada${seleccionados.size > 1 ? "s" : ""}`
+                : "Seleccioná cuentas para asignar en bloque"
+              }
+            </div>
+          )}
+        </div>
       )}
 
       {/* Lista */}
@@ -574,20 +568,42 @@ export default function PlantillasPage() {
         <div className="card text-center py-12">
           <Building2 size={32} className="mx-auto text-ink-300 mb-3" />
           <div className="text-base font-semibold">Sin cuentas aún</div>
-          <p className="text-sm text-ink-500 mt-1 mb-4">
-            Creá la primera cuenta o importá desde Excel.
-          </p>
-          <button onClick={abrirNuevo} className="btn btn-primary inline-flex">
-            + Nueva cuenta
-          </button>
+          <p className="text-sm text-ink-500 mt-1 mb-4">Creá la primera cuenta o importá desde Excel.</p>
+          <button onClick={abrirNuevo} className="btn btn-primary inline-flex">+ Nueva cuenta</button>
         </div>
       ) : (
         <div className="panel divide-y divide-ink-200">
+
+          {/* Header con checkbox "todos" — solo para admin/supervisor */}
+          {puedeAsignar && (
+            <div className="flex items-center px-4 py-2.5 bg-ink-50 border-b border-ink-200">
+              <input
+                type="checkbox"
+                checked={todosSeleccionados}
+                onChange={toggleTodos}
+                className="w-4 h-4 accent-accent mr-3 flex-shrink-0"
+              />
+              <span className="text-2xs text-ink-500 uppercase tracking-wider font-semibold">
+                {todosSeleccionados ? "Deseleccionar todos" : `Seleccionar todos (${itemsFiltrados.length})`}
+              </span>
+            </div>
+          )}
+
           {itemsFiltrados.map(item => (
             <div
               key={item.id}
-              className="flex items-center px-4 py-3 hover:bg-ink-50 transition-colors group"
+              className={`flex items-center px-4 py-3 hover:bg-ink-50 transition-colors group ${seleccionados.has(item.id) ? "bg-accent-light/30" : ""}`}
             >
+              {/* Checkbox — solo admin/supervisor */}
+              {puedeAsignar && (
+                <input
+                  type="checkbox"
+                  checked={seleccionados.has(item.id)}
+                  onChange={() => toggleSeleccion(item.id)}
+                  className="w-4 h-4 accent-accent mr-3 flex-shrink-0"
+                />
+              )}
+
               <div className="flex items-center gap-3 flex-1 min-w-0">
                 <div className="w-8 h-8 bg-accent-light flex items-center justify-center text-accent flex-shrink-0">
                   <Building2 size={14} />
@@ -604,8 +620,10 @@ export default function PlantillasPage() {
                     {item.tipo && <span className="capitalize">{item.tipo}</span>}
                     {item.sociedad && <span>{item.sociedad}</span>}
                     {item.cuenta_interna && <span className="font-mono">{item.cuenta_interna}</span>}
-                    {item.conciliador_nombre && <span>👤 {item.conciliador_nombre}</span>}
-                    <span>{item.plantilla_id ? "Con plantilla" : "Sin plantilla"}</span>
+                    {item.conciliador_nombre
+                      ? <span className="text-accent font-medium">👤 {item.conciliador_nombre}</span>
+                      : <span className="text-ink-300 italic">Sin conciliador</span>
+                    }
                   </div>
                 </div>
               </div>
@@ -616,19 +634,15 @@ export default function PlantillasPage() {
                     {item.categoria}
                   </span>
                 )}
-                {/* Editar datos */}
                 <button
                   onClick={() => abrirEditar(item)}
                   className="btn btn-secondary py-1 px-2 text-2xs opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="Editar datos de la cuenta"
                 >
                   <Pencil size={12} /> Editar
                 </button>
-                {/* Ir a plantilla de mapeo */}
                 <Link
                   href={`/plantillas/${item.id}`}
                   className="btn btn-secondary py-1 px-2 text-2xs opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="Configurar plantilla de mapeo"
                 >
                   <Settings size={12} /> Plantilla
                 </Link>
@@ -637,11 +651,46 @@ export default function PlantillasPage() {
           ))}
         </div>
       )}
+
+      {/* Barra flotante de asignación masiva */}
+      {puedeAsignar && algunoSeleccionado && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-ink-900 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-4 min-w-[480px]">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Users size={16} className="text-accent" />
+            <span>{seleccionados.size} cuenta{seleccionados.size > 1 ? "s" : ""} seleccionada{seleccionados.size > 1 ? "s" : ""}</span>
+          </div>
+          <div className="flex-1">
+            <select
+              value={conciliadorMasivo}
+              onChange={e => setConciliadorMasivo(e.target.value)}
+              className="w-full bg-ink-800 text-white border border-ink-600 rounded px-3 py-1.5 text-sm outline-none focus:border-accent"
+            >
+              <option value="">— Seleccioná un conciliador —</option>
+              {usuarios.map(u => (
+                <option key={u.id} value={u.id}>{u.nombre} ({u.rol})</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={asignarConciliadorMasivo}
+            disabled={!conciliadorMasivo || asignando}
+            className="bg-accent hover:bg-accent-dark text-white px-4 py-1.5 rounded text-sm font-semibold disabled:opacity-40 transition-all whitespace-nowrap"
+          >
+            {asignando ? "Asignando…" : "Asignar"}
+          </button>
+          <button
+            onClick={() => { setSeleccionados(new Set()); setConciliadorMasivo("") }}
+            className="text-ink-400 hover:text-white transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
     </div>
   )
 }
 
-// Descarga la plantilla Excel de ejemplo
 function descargarPlantilla() {
   import("xlsx").then(XLSX => {
     const wb = XLSX.utils.book_new()
@@ -654,17 +703,13 @@ function descargarPlantilla() {
     ]
 
     const ws = XLSX.utils.aoa_to_sheet(datos)
-
-    // Ancho de columnas
     ws["!cols"] = [
       { wch: 28 }, { wch: 15 }, { wch: 18 }, { wch: 16 },
       { wch: 22 }, { wch: 16 }, { wch: 18 }, { wch: 20 },
       { wch: 12 }, { wch: 25 },
     ]
-
     XLSX.utils.book_append_sheet(wb, ws, "Maestro de Cuentas")
 
-    // Hoja de rubros
     const rubrosData = [
       ["Rubro", "Descripción"],
       ["Servicios", "Prestación de servicios profesionales"],
@@ -679,10 +724,8 @@ function descargarPlantilla() {
       ["Gobierno", "Organismos públicos"],
       ["Otro", "Otros rubros"],
     ]
-    const wsRubros = XLSX.utils.aoa_to_sheet(rubrosData)
-    XLSX.utils.book_append_sheet(wb, wsRubros, "Rubros")
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rubrosData), "Rubros")
 
-    // Hoja categorías
     const catsData = [
       ["Categoría", "Frecuencia", "Descripción"],
       ["A", "Semanal", "Cuentas de alto movimiento — conciliación cada 7 días"],
@@ -692,8 +735,7 @@ function descargarPlantilla() {
       ["E", "Manual", "Sin frecuencia automática — el supervisor define la fecha"],
       ["F", "Manual", "Sin frecuencia automática — seguimiento especial"],
     ]
-    const wsCats = XLSX.utils.aoa_to_sheet(catsData)
-    XLSX.utils.book_append_sheet(wb, wsCats, "Categorías")
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(catsData), "Categorías")
 
     XLSX.writeFile(wb, "plantilla_maestro_cuentas.xlsx")
   })

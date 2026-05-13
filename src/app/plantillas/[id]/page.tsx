@@ -81,17 +81,32 @@ export default function EditarPlantillaPage() {
     if (!p) { setCargandoHist(false); return }
     const { data } = await supabase
       .from("plantillas_historial")
-      .select("id, accion, campo_modificado, created_at, usuarios(nombre)")
+      .select("id, accion, campo_modificado, created_at, usuario_id")
       .eq("plantilla_id", p.id)
       .order("created_at", { ascending: false })
       .limit(50)
-    setHistorial((data ?? []).map((h: any) => ({
-      id: h.id,
-      accion: h.accion,
-      campo_modificado: h.campo_modificado,
-      created_at: h.created_at,
-      nombre_usuario: h.usuarios?.nombre ?? null,
-    })))
+
+    // Enriquecer con nombre de usuario
+    const items = []
+    for (const h of data ?? []) {
+      let nombre_usuario = null
+      if (h.usuario_id) {
+        const { data: u } = await supabase
+          .from("usuarios")
+          .select("nombre")
+          .eq("id", h.usuario_id)
+          .single()
+        nombre_usuario = u?.nombre ?? null
+      }
+      items.push({
+        id: h.id,
+        accion: h.accion,
+        campo_modificado: h.campo_modificado,
+        created_at: h.created_at,
+        nombre_usuario,
+      })
+    }
+    setHistorial(items)
     setCargandoHist(false)
   }
 

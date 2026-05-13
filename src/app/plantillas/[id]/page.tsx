@@ -44,7 +44,7 @@ export default function EditarPlantillaPage() {
     accion: string
     campo_modificado: string | null
     created_at: string
-    nombre_usuario: string | null
+    usuario_id: string | null
   }[]>([])
   const [cargandoHist, setCargandoHist] = useState(false)
 
@@ -71,42 +71,15 @@ export default function EditarPlantillaPage() {
   }, [contraparteId])
 
   async function cargarHistorial() {
+    if (!plantilla?.id) return
     setCargandoHist(true)
-    // Buscar el id de la plantilla via contraparteId
-    const { data: p } = await supabase
-      .from("plantillas_proveedor")
-      .select("id")
-      .eq("contraparte_id", contraparteId)
-      .single()
-    if (!p) { setCargandoHist(false); return }
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("plantillas_historial")
       .select("id, accion, campo_modificado, created_at, usuario_id")
-      .eq("plantilla_id", p.id)
+      .eq("plantilla_id", plantilla.id)
       .order("created_at", { ascending: false })
       .limit(50)
-
-    // Enriquecer con nombre de usuario
-    const items = []
-    for (const h of data ?? []) {
-      let nombre_usuario = null
-      if (h.usuario_id) {
-        const { data: u } = await supabase
-          .from("usuarios")
-          .select("nombre")
-          .eq("id", h.usuario_id)
-          .single()
-        nombre_usuario = u?.nombre ?? null
-      }
-      items.push({
-        id: h.id,
-        accion: h.accion,
-        campo_modificado: h.campo_modificado,
-        created_at: h.created_at,
-        nombre_usuario,
-      })
-    }
-    setHistorial(items)
+    if (!error) setHistorial(data ?? [])
     setCargandoHist(false)
   }
 

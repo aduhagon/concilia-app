@@ -8,7 +8,7 @@ import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
 import type { AjusteManual, MovimientoResultado, StatusPendiente } from "@/types"
 import { STATUS_LABELS } from "@/types"
-import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User, Lock, Unlock, ChevronDown, History, Printer } from "lucide-react"
+import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User, Lock, Unlock, ChevronDown, History, Printer, Shield, KeyRound } from "lucide-react"
 
 type Conciliacion = {
   id: string
@@ -78,6 +78,9 @@ export default function DetalleConciliacionPage() {
   const [observacion, setObservacion] = useState("")
   const [accionando, setAccionando] = useState(false)
   const [generandoPDF, setGenerandoPDF] = useState(false)
+  const [password, setPassword] = useState("")
+  const [errorPassword, setErrorPassword] = useState<string | null>(null)
+  const [firmas, setFirmas] = useState<{ tipo_firma: string; hash_contenido: string; firmado_en: string; usuario_nombre: string | null }[]>([])
   const [grupoConfig, setGrupoConfig] = useState<{ logo_url: string | null; nombre_display: string | null; color_primario: string }>({ logo_url: null, nombre_display: null, color_primario: "#1E3A5F" })
 
   useEffect(() => {
@@ -123,6 +126,28 @@ export default function DetalleConciliacionPage() {
         if (cfg) setGrupoConfig(cfg)
       }
 
+      // Cargar firmas digitales
+      const { data: firmasData } = await supabase
+        .from("firmas_conciliacion")
+        .select("tipo_firma, hash_contenido, firmado_en, usuario_id")
+        .eq("conciliacion_id", params.id)
+        .order("firmado_en", { ascending: true })
+      if (firmasData && firmasData.length > 0) {
+        const firmaUserIds = Array.from(new Set(firmasData.map(f => f.usuario_id)))
+        const { data: usersFirmas } = await supabase
+          .from("usuarios")
+          .select("id, nombre")
+          .in("id", firmaUserIds)
+        const nombresPorId: Record<string, string> = {}
+        for (const u of usersFirmas ?? []) nombresPorId[u.id] = u.nombre
+        setFirmas(firmasData.map(f => ({
+          tipo_firma: f.tipo_firma,
+          hash_contenido: f.hash_contenido,
+          firmado_en: f.firmado_en,
+          usuario_nombre: nombresPorId[f.usuario_id] ?? null,
+        })))
+      }
+
       setC(cab as unknown as Conciliacion)
       setPendientes((movs ?? []) as unknown as MovGuardado[])
       setHistorial((hist ?? []) as unknown as HistorialItem[])
@@ -131,9 +156,64 @@ export default function DetalleConciliacionPage() {
     cargar()
   }, [params.id])
 
+  async function calcularHashConciliacion(c: Conciliacion, pendientes: MovGuardado[]): Promise<string> {
+    // Hash del contenido firmado: incluye saldos, diferencia y resumen de pendientes
+    const contenido = {
+      id: c.id,
+      saldos: {
+        compania_ars: c.saldo_final_compania_ars,
+        compania_usd: c.saldo_final_compania_usd,
+        contraparte_ars: c.saldo_final_contraparte_ars,
+        contraparte_usd: c.saldo_final_contraparte_usd,
+      },
+      tc_cierre: c.tc_cierre,
+      diferencia: c.diferencia_final_ars,
+      pendientes_count: pendientes.length,
+      pendientes_ids: pendientes.map(m => m.id).sort(),
+      ajustes: c.ajustes_manuales,
+      clasificacion: c.clasificacion_pendientes,
+    }
+    const texto = JSON.stringify(contenido)
+    const buf = new TextEncoder().encode(texto)
+    const hashBuf = await crypto.subtle.digest("SHA-256", buf)
+    return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, "0")).join("")
+  }
+
   async function ejecutarAccion(accion: "cerrado_operativo" | "aprobado" | "reabierto") {
     if (!c || !usuarioActual) return
+
+    // Para cierre y aprobación, exigir password
+    const requierePassword = accion === "cerrado_operativo" || accion === "aprobado"
+    if (requierePassword) {
+      if (!password) {
+        setErrorPassword("Debés ingresar tu contraseña para firmar")
+        return
+      }
+      setErrorPassword(null)
+    }
+
     setAccionando(true)
+
+    // Verificar password contra Supabase Auth
+    let passwordVerified = false
+    if (requierePassword) {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user?.email) {
+        setErrorPassword("No se pudo identificar el usuario")
+        setAccionando(false)
+        return
+      }
+      const { error: errAuth } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password,
+      })
+      if (errAuth) {
+        setErrorPassword("Contraseña incorrecta")
+        setAccionando(false)
+        return
+      }
+      passwordVerified = true
+    }
 
     const estadoAnterior = c.estado
     const ahora = new Date().toISOString()
@@ -163,6 +243,22 @@ export default function DetalleConciliacionPage() {
       accion,
       observacion: observacion || null,
     })
+
+    // Guardar firma digital para cierre y aprobación
+    if (requierePassword && passwordVerified) {
+      const hashContenido = await calcularHashConciliacion(c, pendientes)
+      const userAgent = navigator.userAgent
+      await supabase.from("firmas_conciliacion").insert({
+        conciliacion_id: c.id,
+        usuario_id: usuarioActual.id,
+        tipo_firma: accion === "cerrado_operativo" ? "cierre_operativo" : "aprobacion_supervisor",
+        hash_contenido: hashContenido,
+        user_agent: userAgent.substring(0, 200),
+        password_verified: true,
+      })
+    }
+
+    setPassword("")
 
     // Recargar
     const { data: cab } = await supabase
@@ -357,7 +453,22 @@ export default function DetalleConciliacionPage() {
         y += 14
       }
 
-
+      // Hashes de firmas digitales
+      if (firmas.length > 0) {
+        texto("FIRMAS DIGITALES (HASH DE VERIFICACIÓN)", margin, y, 6.5, true, [80, 130, 100])
+        y += 5
+        for (const f of firmas) {
+          const labelFirma = f.tipo_firma === "cierre_operativo" ? "Cierre" : "Aprobación"
+          doc.setFontSize(6.5)
+          doc.setFont("helvetica", "normal")
+          doc.setTextColor(80, 80, 80)
+          doc.text(`${labelFirma} (${f.usuario_nombre ?? "Usuario"}):`, margin, y)
+          doc.setFont("courier", "normal")
+          doc.text(f.hash_contenido, margin + 35, y)
+          y += 4
+        }
+        y += 4
+      }
 
       // ── SALDOS ──
       lineaH(y, colorPrimario, 0.6)
@@ -735,6 +846,38 @@ export default function DetalleConciliacionPage() {
           )}
         </div>
 
+        {/* Firmas digitales con hash */}
+        {firmas.length > 0 && (
+          <div className="border-t border-ink-200 pt-3 space-y-2">
+            <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold flex items-center gap-1.5">
+              <Shield size={11} className="text-ok" /> Firmas digitales verificadas
+            </div>
+            {firmas.map((f, i) => {
+              const label = f.tipo_firma === "cierre_operativo" ? "Cierre operativo" : "Aprobación supervisor"
+              const color = f.tipo_firma === "cierre_operativo" ? "text-warn" : "text-ok"
+              return (
+                <div key={i} className="bg-ink-50 rounded-md p-2.5 text-xs space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Shield size={12} className={color} />
+                      <span className="font-semibold">{label}</span>
+                      <span className="text-ink-500">·</span>
+                      <span>{f.usuario_nombre ?? "Usuario"}</span>
+                    </div>
+                    <span className="text-2xs text-ink-400">{new Date(f.firmado_en).toLocaleString("es-AR")}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-2xs">
+                    <span className="text-ink-400">Hash:</span>
+                    <span className="font-mono text-ink-600 break-all" title={f.hash_contenido}>
+                      {f.hash_contenido.substring(0, 16)}…{f.hash_contenido.substring(f.hash_contenido.length - 16)}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
         {/* Botones de acción */}
         <div className="flex items-center gap-3 pt-2 border-t border-ink-200">
           {puedeOperativoCerrar && (
@@ -801,16 +944,32 @@ export default function DetalleConciliacionPage() {
       {mostrarModalCierre && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl space-y-4">
-            <div className="text-base font-semibold">Cerrar conciliación</div>
-            <p className="text-sm text-ink-600">Una vez cerrada, ningún operativo podrá modificarla. El supervisor podrá revisarla y aprobarla o reabrirla.</p>
+            <div className="text-base font-semibold flex items-center gap-2">
+              <Shield size={16} className="text-accent" /> Cerrar conciliación con firma digital
+            </div>
+            <p className="text-sm text-ink-600">Una vez cerrada, ningún operativo podrá modificarla. Quedará registrado tu nombre, fecha y un hash criptográfico del contenido para verificar que no se altere.</p>
             <div>
               <label className="label">Observación (opcional)</label>
               <textarea value={observacion} onChange={e => setObservacion(e.target.value)} className="input w-full h-20 resize-none" placeholder="Notas para el supervisor…" />
             </div>
+            <div>
+              <label className="label flex items-center gap-1.5">
+                <KeyRound size={11} /> Confirmá con tu contraseña *
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={e => { setPassword(e.target.value); setErrorPassword(null) }}
+                className="input w-full"
+                placeholder="Tu contraseña actual"
+                autoFocus
+              />
+              {errorPassword && <div className="text-2xs text-danger mt-1">{errorPassword}</div>}
+            </div>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setMostrarModalCierre(false)} className="btn btn-secondary">Cancelar</button>
-              <button onClick={() => ejecutarAccion("cerrado_operativo")} disabled={accionando} className="btn btn-primary disabled:opacity-40">
-                <Lock size={13} /> {accionando ? "Cerrando…" : "Confirmar cierre"}
+              <button onClick={() => { setMostrarModalCierre(false); setPassword(""); setErrorPassword(null) }} className="btn btn-secondary">Cancelar</button>
+              <button onClick={() => ejecutarAccion("cerrado_operativo")} disabled={accionando || !password} className="btn btn-primary disabled:opacity-40">
+                <Lock size={13} /> {accionando ? "Firmando…" : "Firmar y cerrar"}
               </button>
             </div>
           </div>
@@ -821,16 +980,32 @@ export default function DetalleConciliacionPage() {
       {mostrarModalAprobacion && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl space-y-4">
-            <div className="text-base font-semibold">Aprobar conciliación</div>
-            <p className="text-sm text-ink-600">Al aprobar, la conciliación queda cerrada y firmada con tu nombre y fecha.</p>
+            <div className="text-base font-semibold flex items-center gap-2">
+              <Shield size={16} className="text-ok" /> Aprobar con firma digital
+            </div>
+            <p className="text-sm text-ink-600">Al aprobar, la conciliación queda firmada con tu nombre, fecha y un hash criptográfico que permite verificar la integridad del contenido aprobado.</p>
             <div>
               <label className="label">Observación (opcional)</label>
               <textarea value={observacion} onChange={e => setObservacion(e.target.value)} className="input w-full h-20 resize-none" placeholder="Comentarios de la revisión…" />
             </div>
+            <div>
+              <label className="label flex items-center gap-1.5">
+                <KeyRound size={11} /> Confirmá con tu contraseña *
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={e => { setPassword(e.target.value); setErrorPassword(null) }}
+                className="input w-full"
+                placeholder="Tu contraseña actual"
+                autoFocus
+              />
+              {errorPassword && <div className="text-2xs text-danger mt-1">{errorPassword}</div>}
+            </div>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setMostrarModalAprobacion(false)} className="btn btn-secondary">Cancelar</button>
-              <button onClick={() => ejecutarAccion("aprobado")} disabled={accionando} className="btn btn-primary disabled:opacity-40" style={{ background: "#1A7A4A" }}>
-                <CheckCircle2 size={13} /> {accionando ? "Aprobando…" : "Aprobar"}
+              <button onClick={() => { setMostrarModalAprobacion(false); setPassword(""); setErrorPassword(null) }} className="btn btn-secondary">Cancelar</button>
+              <button onClick={() => ejecutarAccion("aprobado")} disabled={accionando || !password} className="btn btn-primary disabled:opacity-40" style={{ background: "#1A7A4A" }}>
+                <CheckCircle2 size={13} /> {accionando ? "Firmando…" : "Firmar y aprobar"}
               </button>
             </div>
           </div>

@@ -329,7 +329,7 @@ export default function DetalleConciliacionPage() {
       doc.setFillColor(...eColor)
       doc.rect(margin, y - 4, 60, 8, "F")
       texto(estadoLabel[c.estado] ?? c.estado.toUpperCase(), margin + 2, y + 0.5, 7, true, [255,255,255])
-      y += 12
+      y += 8
 
       // Grilla de datos — 3 columnas
       const col1 = margin
@@ -339,14 +339,14 @@ export default function DetalleConciliacionPage() {
       etiqueta("Fecha", new Date(c.created_at).toLocaleDateString("es-AR"), col1, y)
       etiqueta("Período", c.periodo_label ?? "—", col2, y)
       etiqueta("Sociedad", sociedad ?? "—", col3, y)
-      y += 14
+      y += 11
 
       etiqueta("Conciliado por", nombreCierre, col1, y)
       etiqueta("TC cierre", c.tc_cierre && c.tc_cierre > 0 ? `$${c.tc_cierre.toLocaleString("es-AR")}` : "—", col2, y)
       if (c.cerrado_fecha) {
         etiqueta("Fecha cierre", new Date(c.cerrado_fecha).toLocaleDateString("es-AR"), col3, y)
       }
-      y += 14
+      y += 11
 
       if (c.aprobado_fecha) {
         etiqueta("Aprobado por", nombreAprobacion, col1, y)

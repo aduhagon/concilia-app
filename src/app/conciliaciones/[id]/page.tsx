@@ -310,6 +310,67 @@ export default function DetalleConciliacionPage() {
       }
       y += 24
 
+      // ── ESTADO Y FIRMAS ──
+      if (y > 235) { doc.addPage(); y = 20 }
+      y += 4
+      lineaH(y, colorPrimario, 0.6)
+      y += 8
+
+      const estadoLabel: Record<string, string> = {
+        aprobado: "APROBADA", cerrado_operativo: "CERRADO POR OPERATIVO",
+        reabierto: "REABIERTA", finalizada: "FINALIZADA",
+        en_proceso: "EN PROCESO", borrador: "BORRADOR",
+      }
+      const estadoColorMap: Record<string, [number,number,number]> = {
+        aprobado: verdeOk, cerrado_operativo: naranja,
+        reabierto: [196, 30, 58], finalizada: naranja,
+      }
+      const eColor = estadoColorMap[c.estado] ?? gris
+      doc.setFillColor(...eColor)
+      doc.rect(margin, y - 4, 60, 8, "F")
+      texto(estadoLabel[c.estado] ?? c.estado.toUpperCase(), margin + 2, y + 0.5, 7, true, [255,255,255])
+      y += 12
+
+      // Grilla de datos — 3 columnas
+      const col1 = margin
+      const col2 = margin + 58
+      const col3 = margin + 116
+
+      etiqueta("Fecha", new Date(c.created_at).toLocaleDateString("es-AR"), col1, y)
+      etiqueta("Período", c.periodo_label ?? "—", col2, y)
+      etiqueta("Sociedad", sociedad ?? "—", col3, y)
+      y += 14
+
+      etiqueta("Conciliado por", nombreCierre, col1, y)
+      etiqueta("TC cierre", c.tc_cierre && c.tc_cierre > 0 ? `$${c.tc_cierre.toLocaleString("es-AR")}` : "—", col2, y)
+      if (c.cerrado_fecha) {
+        etiqueta("Fecha cierre", new Date(c.cerrado_fecha).toLocaleDateString("es-AR"), col3, y)
+      }
+      y += 14
+
+      if (c.aprobado_fecha) {
+        etiqueta("Aprobado por", nombreAprobacion, col1, y)
+        etiqueta("Fecha aprobación", new Date(c.aprobado_fecha).toLocaleDateString("es-AR"), col2, y)
+        if (c.observacion_aprobacion) {
+          etiqueta("Obs.", c.observacion_aprobacion.substring(0, 40), col3, y)
+        }
+        y += 14
+      }
+
+      // Líneas de firma
+      lineaH(y, grisClarito, 0.3)
+      y += 14
+      doc.setDrawColor(80,80,80)
+      doc.setLineWidth(0.3)
+      doc.line(col1, y, col1 + 52, y)
+      doc.line(col2, y, col2 + 52, y)
+      doc.line(col3, y, col3 + 52, y)
+      y += 4
+      texto("Conciliador responsable", col1, y, 6.5, false, gris)
+      texto("Supervisor / Aprobador", col2, y, 6.5, false, gris)
+      texto("Fecha", col3, y, 6.5, false, gris)
+
+
       // ── SALDOS ──
       lineaH(y, colorPrimario, 0.6)
       y += 5
@@ -424,66 +485,6 @@ export default function DetalleConciliacionPage() {
           y += 3
         }
       }
-
-      // ── ESTADO Y FIRMAS ──
-      if (y > 235) { doc.addPage(); y = 20 }
-      y += 4
-      lineaH(y, colorPrimario, 0.6)
-      y += 8
-
-      const estadoLabel: Record<string, string> = {
-        aprobado: "APROBADA", cerrado_operativo: "CERRADO POR OPERATIVO",
-        reabierto: "REABIERTA", finalizada: "FINALIZADA",
-        en_proceso: "EN PROCESO", borrador: "BORRADOR",
-      }
-      const estadoColorMap: Record<string, [number,number,number]> = {
-        aprobado: verdeOk, cerrado_operativo: naranja,
-        reabierto: [196, 30, 58], finalizada: naranja,
-      }
-      const eColor = estadoColorMap[c.estado] ?? gris
-      doc.setFillColor(...eColor)
-      doc.rect(margin, y - 4, 60, 8, "F")
-      texto(estadoLabel[c.estado] ?? c.estado.toUpperCase(), margin + 2, y + 0.5, 7, true, [255,255,255])
-      y += 12
-
-      // Grilla de datos — 3 columnas
-      const col1 = margin
-      const col2 = margin + 58
-      const col3 = margin + 116
-
-      etiqueta("Fecha", new Date(c.created_at).toLocaleDateString("es-AR"), col1, y)
-      etiqueta("Período", c.periodo_label ?? "—", col2, y)
-      etiqueta("Sociedad", sociedad ?? "—", col3, y)
-      y += 14
-
-      etiqueta("Conciliado por", nombreCierre, col1, y)
-      etiqueta("TC cierre", c.tc_cierre && c.tc_cierre > 0 ? `$${c.tc_cierre.toLocaleString("es-AR")}` : "—", col2, y)
-      if (c.cerrado_fecha) {
-        etiqueta("Fecha cierre", new Date(c.cerrado_fecha).toLocaleDateString("es-AR"), col3, y)
-      }
-      y += 14
-
-      if (c.aprobado_fecha) {
-        etiqueta("Aprobado por", nombreAprobacion, col1, y)
-        etiqueta("Fecha aprobación", new Date(c.aprobado_fecha).toLocaleDateString("es-AR"), col2, y)
-        if (c.observacion_aprobacion) {
-          etiqueta("Obs.", c.observacion_aprobacion.substring(0, 40), col3, y)
-        }
-        y += 14
-      }
-
-      // Líneas de firma
-      lineaH(y, grisClarito, 0.3)
-      y += 14
-      doc.setDrawColor(80,80,80)
-      doc.setLineWidth(0.3)
-      doc.line(col1, y, col1 + 52, y)
-      doc.line(col2, y, col2 + 52, y)
-      doc.line(col3, y, col3 + 52, y)
-      y += 4
-      texto("Conciliador responsable", col1, y, 6.5, false, gris)
-      texto("Supervisor / Aprobador", col2, y, 6.5, false, gris)
-      texto("Fecha", col3, y, 6.5, false, gris)
 
       // Pie de página
       lineaH(288, grisClarito, 0.2)

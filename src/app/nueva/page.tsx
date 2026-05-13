@@ -210,12 +210,25 @@ export default function NuevaConciliacionPage() {
       return
     }
 
-    // 2. Guardar SOLO los pendientes (cmp + cont) — son los que hacen falta para arrastres
-    //    Los conciliados/dif_cambio/ajustes propios no aportan valor histórico.
+    // 2. Guardar pendientes Y los movimientos que pertenecen a matches agrupados aceptados
     const pendientes = resultado.movimientos.filter((m) => m.estado === "pendiente")
 
-    if (pendientes.length > 0) {
-      const filas = pendientes.map((m) => ({
+    // Identificar movimientos involucrados en sugerencias agrupadas aceptadas
+    const sugAceptadas = (resultado.sugerencias_agrupadas ?? []).filter(s => sugerenciasAceptadas.has(s.id_unico))
+    const idsUnicosAgrupados = new Set<string>()
+    for (const s of sugAceptadas) {
+      s.movs_lado_n.forEach(id => idsUnicosAgrupados.add(id))
+      idsUnicosAgrupados.add(s.mov_lado_1)
+    }
+    const movsAgrupados = resultado.movimientos.filter(m => idsUnicosAgrupados.has(m.id_unico))
+
+    // Mapa idUnico (temporal) → UUID real de la DB (lo llenamos al insertar)
+    const mapIdUnicoAReal: Record<string, string> = {}
+
+    const todosAGuardar = [...pendientes, ...movsAgrupados]
+
+    if (todosAGuardar.length > 0) {
+      const filas = todosAGuardar.map((m) => ({
         conciliacion_id: nueva.id,
         origen: m.origen,
         fecha: m.fecha?.toISOString().slice(0, 10),
@@ -227,17 +240,68 @@ export default function NuevaConciliacionPage() {
         importe_usd: m.importe_usd,
         moneda: m.moneda,
         descripcion: m.descripcion,
-        // Guardamos en estado_conciliacion el STATUS clasificado, no "pendiente" plano,
-        // para que en el historial sepamos a qué categoría pertenecía.
-        // Si no hay clasificación, queda como "pendiente".
-        estado_conciliacion: clasificacion[m.id_unico] ?? "pendiente",
+        // Pendientes mantienen su estado clasificado; agrupados aceptados quedan como "conciliado"
+        estado_conciliacion: m.estado === "conciliado"
+          ? "conciliado"
+          : (clasificacion[m.id_unico] ?? "pendiente"),
         match_id: null,
       }))
 
-      const { error: errMovs } = await supabase.from("movimientos").insert(filas)
+      const { data: movsInsertados, error: errMovs } = await supabase
+        .from("movimientos")
+        .insert(filas)
+        .select("id")
+
       if (errMovs) {
         toast.show(`Guardado parcial: falló el detalle (${errMovs.message})`, "error")
         return
+      }
+
+      // Mapear id_unico → UUID real (en orden de inserción)
+      if (movsInsertados) {
+        todosAGuardar.forEach((m, idx) => {
+          if (movsInsertados[idx]) mapIdUnicoAReal[m.id_unico] = movsInsertados[idx].id
+        })
+      }
+    }
+
+    // 2.b. Guardar matches agrupados aceptados (después de tener UUIDs reales)
+    if (sugAceptadas.length > 0) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        const usuarioId = user?.id ?? null
+        const ahoraIso = new Date().toISOString()
+
+        const filasAgrupadas = sugAceptadas
+          .map(s => {
+            const movsN_uuids = s.movs_lado_n.map(id => mapIdUnicoAReal[id]).filter(Boolean)
+            const movUno_uuid = mapIdUnicoAReal[s.mov_lado_1]
+            if (movsN_uuids.length === 0 || !movUno_uuid) return null
+            return {
+              conciliacion_id: nueva.id,
+              tipo: s.tipo,
+              movs_lado_n: movsN_uuids,
+              mov_lado_1: movUno_uuid,
+              total_lado_n_ars: s.total_lado_n_ars,
+              total_lado_n_usd: s.total_lado_n_usd,
+              importe_lado_1_ars: s.importe_lado_1_ars,
+              importe_lado_1_usd: s.importe_lado_1_usd,
+              diferencia_ars: s.diferencia_ars,
+              diferencia_usd: s.diferencia_usd,
+              estado: "aceptado" as const,
+              score_confianza: s.score_confianza,
+              aceptado_por: usuarioId,
+              aceptado_en: ahoraIso,
+            }
+          })
+          .filter(Boolean)
+
+        if (filasAgrupadas.length > 0) {
+          await supabase.from("matches_agrupados").insert(filasAgrupadas as any)
+        }
+      } catch (e) {
+        console.error("Error guardando matches agrupados:", e)
+        // no bloquear el guardado principal
       }
     }
 
@@ -273,7 +337,9 @@ export default function NuevaConciliacionPage() {
       } catch { /* no bloquear si falla el log */ }
     }
 
-    toast.show(`✓ Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""}) — ${pendientes.length} pendientes`, "ok")
+    const cantAgrupados = sugAceptadas.length
+    const msgAgrupados = cantAgrupados > 0 ? ` + ${cantAgrupados} match(es) agrupado(s)` : ""
+    toast.show(`✓ Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""}) — ${pendientes.length} pendientes${msgAgrupados}`, "ok")
     // Limpiar el borrador después de guardar exitoso
     setTimeout(() => {
       clearContraparteId()

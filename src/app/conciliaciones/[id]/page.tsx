@@ -81,6 +81,28 @@ export default function DetalleConciliacionPage() {
   const [password, setPassword] = useState("")
   const [errorPassword, setErrorPassword] = useState<string | null>(null)
   const [firmas, setFirmas] = useState<{ tipo_firma: string; hash_contenido: string; firmado_en: string; usuario_nombre: string | null }[]>([])
+  const [matchesAgrupados, setMatchesAgrupados] = useState<{
+    id: string
+    tipo: string
+    movs_lado_n: string[]
+    mov_lado_1: string
+    total_lado_n_ars: number
+    total_lado_n_usd: number
+    importe_lado_1_ars: number
+    importe_lado_1_usd: number
+    diferencia_ars: number
+    diferencia_usd: number
+    score_confianza: number
+    estado: string
+  }[]>([])
+  const [movsDeAgrupados, setMovsDeAgrupados] = useState<Record<string, {
+    fecha: string | null
+    tipo_original: string
+    comprobante_raw: string
+    importe_ars: number
+    importe_usd: number
+    origen: string
+  }>>({}) // id → datos del movimiento
   const [grupoConfig, setGrupoConfig] = useState<{ logo_url: string | null; nombre_display: string | null; color_primario: string }>({ logo_url: null, nombre_display: null, color_primario: "#1E3A5F" })
 
   useEffect(() => {
@@ -124,6 +146,28 @@ export default function DetalleConciliacionPage() {
           .eq("grupo_id", grupo.id)
           .single()
         if (cfg) setGrupoConfig(cfg)
+      }
+
+      // Cargar matches agrupados
+      const { data: agrupadosData } = await supabase
+        .from("matches_agrupados")
+        .select("id, tipo, movs_lado_n, mov_lado_1, total_lado_n_ars, total_lado_n_usd, importe_lado_1_ars, importe_lado_1_usd, diferencia_ars, diferencia_usd, score_confianza, estado")
+        .eq("conciliacion_id", params.id)
+        .eq("estado", "aceptado")
+      if (agrupadosData && agrupadosData.length > 0) {
+        setMatchesAgrupados(agrupadosData)
+        // Cargar los datos de todos los movimientos involucrados
+        const allMovIds: string[] = []
+        for (const ma of agrupadosData) {
+          allMovIds.push(...ma.movs_lado_n, ma.mov_lado_1)
+        }
+        const { data: movsData } = await supabase
+          .from("movimientos")
+          .select("id, fecha, tipo_original, comprobante_raw, importe_ars, importe_usd, origen")
+          .in("id", allMovIds)
+        const movsMap: Record<string, any> = {}
+        for (const m of movsData ?? []) movsMap[m.id] = m
+        setMovsDeAgrupados(movsMap)
       }
 
       // Cargar firmas digitales
@@ -806,6 +850,95 @@ export default function DetalleConciliacionPage() {
           </div>
         </div>
       </div>
+
+      {/* ── MATCHES AGRUPADOS (NIVEL 4) ── */}
+      {matchesAgrupados.length > 0 && (
+        <div className="card space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold flex items-center gap-2">
+              <FileSpreadsheet size={11} className="text-accent" />
+              Matches agrupados aceptados ({matchesAgrupados.length})
+            </div>
+            <span className="text-2xs text-ink-400">Combinaciones N↔1 detectadas por el motor nivel 4</span>
+          </div>
+          <div className="space-y-3">
+            {matchesAgrupados.map(ma => {
+              const movsN = ma.movs_lado_n.map(id => movsDeAgrupados[id]).filter(Boolean)
+              const movUno = movsDeAgrupados[ma.mov_lado_1]
+              const fmtNum = (n: number) => n.toLocaleString("es-AR", { minimumFractionDigits: 2 })
+              const origenN = movsN[0]?.origen ?? "compania"
+              const origen1 = movUno?.origen ?? "contraparte"
+
+              return (
+                <div key={ma.id} className="border border-ink-200 rounded-md p-3 bg-ink-50/50">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xs uppercase tracking-wider text-ink-500 font-semibold">
+                        {ma.tipo === "N_a_1" ? `${movsN.length} de compañía → 1 de contraparte` : `1 de compañía → ${movsN.length} de contraparte`}
+                      </span>
+                      <span className="text-2xs font-bold px-1.5 py-0.5 rounded bg-ok-light text-ok">
+                        {Number(ma.score_confianza).toFixed(0)}%
+                      </span>
+                    </div>
+                    <span className="text-2xs text-ok font-semibold">✓ Aceptado</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* Lado N */}
+                    <div className="border border-ink-200 rounded p-2 bg-white">
+                      <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold mb-2">
+                        {origenN === "compania" ? "COMPAÑÍA" : "CONTRAPARTE"} · {movsN.length} comprobantes
+                      </div>
+                      <div className="space-y-1">
+                        {movsN.map((m, idx) => (
+                          <div key={idx} className="flex items-center gap-2 text-2xs py-1 border-b border-ink-100 last:border-0">
+                            <span className="text-ink-500 font-mono">{m.fecha ?? "—"}</span>
+                            <span className="flex-1 truncate">{m.tipo_original}</span>
+                            <span className="font-mono">{m.comprobante_raw}</span>
+                            <span className="num text-right font-semibold">{fmtNum(Math.abs(Number(m.importe_ars)))}</span>
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-between text-xs pt-1 border-t border-ink-300 font-semibold">
+                          <span>Total</span>
+                          <span className="num">{fmtNum(Number(ma.total_lado_n_ars))}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Lado 1 */}
+                    <div className="border border-accent/30 rounded p-2 bg-accent/5">
+                      <div className="text-2xs uppercase tracking-wider text-accent font-semibold mb-2">
+                        {origen1 === "compania" ? "COMPAÑÍA" : "CONTRAPARTE"} · 1 movimiento
+                      </div>
+                      {movUno && (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 text-2xs py-1">
+                            <span className="text-ink-500 font-mono">{movUno.fecha ?? "—"}</span>
+                            <span className="flex-1 truncate">{movUno.tipo_original}</span>
+                            <span className="font-mono">{movUno.comprobante_raw}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs pt-1 border-t border-accent/30 font-semibold">
+                            <span>Importe</span>
+                            <span className="num">{fmtNum(Number(ma.importe_lado_1_ars))}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-2 flex items-center justify-between text-2xs">
+                    <span className="text-ink-500">Diferencia:</span>
+                    <span className={`font-mono font-semibold ${Math.abs(Number(ma.diferencia_ars)) < 1 ? "text-ok" : "text-warn"}`}>
+                      {Math.abs(Number(ma.diferencia_ars)) < 1 ? "✓ Match exacto" : `${fmtNum(Number(ma.diferencia_ars))} ARS`}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── ACCIONES DE CIERRE ── */}
       <div className="card space-y-4">
         <div className="flex items-center justify-between">

@@ -54,7 +54,9 @@ export default function NuevaConciliacionPage() {
 
   const toast = useToast()
 
-  const [tab, setTab] = useState<"papel" | "clasificacion" | "ajustes" | "movimientos">("papel")
+  const [tab, setTab] = useState<"papel" | "sugerencias" | "clasificacion" | "ajustes" | "movimientos">("papel")
+  const [sugerenciasRechazadas, setSugerenciasRechazadas] = useState<Set<string>>(new Set())
+  const [sugerenciasAceptadas, setSugerenciasAceptadas] = useState<Set<string>>(new Set())
   const [tabMovs, setTabMovs] = useState<"conciliados" | "dif_cambio" | "dif_real" | "pend_cmp" | "pend_cont" | "ajustes_propios" | "no_clas">("pend_cmp")
 
   // Última conciliación de este proveedor (para botón "Copiar de mes anterior")
@@ -500,6 +502,14 @@ export default function NuevaConciliacionPage() {
 
           <div className="flex gap-1 border-b border-ink-200 overflow-x-auto">
             <Tab active={tab === "papel"} onClick={() => setTab("papel")}>Presentación</Tab>
+            {(resultado.sugerencias_agrupadas?.length ?? 0) > 0 && (
+              <Tab active={tab === "sugerencias"} onClick={() => setTab("sugerencias")}>
+                <span className="inline-flex items-center gap-1.5">
+                  <span>Agrupados ({resultado.sugerencias_agrupadas.length})</span>
+                  <span className="bg-warn-light text-warn text-2xs font-bold px-1.5 py-0.5 rounded">NUEVO</span>
+                </span>
+              </Tab>
+            )}
             <Tab active={tab === "clasificacion"} onClick={() => setTab("clasificacion")}>
               Clasificar pendientes ({pendientes.length})
             </Tab>
@@ -533,6 +543,34 @@ export default function NuevaConciliacionPage() {
                 aprobadoPor={aprobadoPor}
               />
             </div>
+          )}
+
+          {tab === "sugerencias" && resultado.sugerencias_agrupadas && (
+            <SugerenciasAgrupadasView
+              sugerencias={resultado.sugerencias_agrupadas}
+              movimientos={resultado.movimientos}
+              rechazadas={sugerenciasRechazadas}
+              aceptadas={sugerenciasAceptadas}
+              onAceptar={(id) => {
+                // Marcar movimientos como conciliados localmente
+                const sug = resultado.sugerencias_agrupadas.find(s => s.id_unico === id)
+                if (!sug) return
+                const idsN = new Set(sug.movs_lado_n)
+                for (const m of resultado.movimientos) {
+                  if (idsN.has(m.id_unico) || m.id_unico === sug.mov_lado_1) {
+                    m.estado = "conciliado"
+                    m.match_id = m.id_unico === sug.mov_lado_1 ? sug.movs_lado_n[0] : sug.mov_lado_1
+                  }
+                }
+                setSugerenciasAceptadas(new Set([...sugerenciasAceptadas, id]))
+                // Forzar re-render
+                setResultado({ ...resultado })
+                toast.show(`Match agrupado aceptado (${sug.movs_lado_n.length} ↔ 1)`, "ok")
+              }}
+              onRechazar={(id) => {
+                setSugerenciasRechazadas(new Set([...sugerenciasRechazadas, id]))
+              }}
+            />
           )}
 
           {tab === "clasificacion" && (
@@ -638,5 +676,196 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
     >
       {children}
     </button>
+  )
+}
+
+// ============================================================
+// Componente: Vista de sugerencias agrupadas (Nivel 4)
+// ============================================================
+
+function SugerenciasAgrupadasView({
+  sugerencias,
+  movimientos,
+  rechazadas,
+  aceptadas,
+  onAceptar,
+  onRechazar,
+}: {
+  sugerencias: import("@/lib/motor-conciliacion").SugerenciaAgrupada[]
+  movimientos: import("@/types").MovimientoResultado[]
+  rechazadas: Set<string>
+  aceptadas: Set<string>
+  onAceptar: (id: string) => void
+  onRechazar: (id: string) => void
+}) {
+  const movsPorId = new Map(movimientos.map(m => [m.id_unico, m]))
+  const pendientes = sugerencias.filter(s => !rechazadas.has(s.id_unico) && !aceptadas.has(s.id_unico))
+  const yaAceptadas = sugerencias.filter(s => aceptadas.has(s.id_unico))
+
+  if (sugerencias.length === 0) {
+    return (
+      <div className="card text-center py-8 text-sm text-ink-400 italic">
+        No se detectaron matches agrupados sugeridos
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="card bg-warn-light/30 border-warn/30">
+        <div className="flex items-start gap-2">
+          <div className="text-warn flex-shrink-0">⚠</div>
+          <div className="text-xs text-ink-700">
+            <strong>Sugerencias del motor — requieren tu validación.</strong>
+            {" "}El motor detectó combinaciones donde la suma de varios movimientos coincide con uno solo del otro lado.
+            Revisá cada caso y aceptá solo los que sean correctos. Aceptar marca los movimientos como conciliados.
+          </div>
+        </div>
+      </div>
+
+      {pendientes.length > 0 && (
+        <div>
+          <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold mb-2">
+            Pendientes de revisar ({pendientes.length})
+          </div>
+          <div className="space-y-3">
+            {pendientes.map(s => (
+              <SugerenciaCard
+                key={s.id_unico}
+                sugerencia={s}
+                movsPorId={movsPorId}
+                onAceptar={() => onAceptar(s.id_unico)}
+                onRechazar={() => onRechazar(s.id_unico)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {yaAceptadas.length > 0 && (
+        <div>
+          <div className="text-2xs uppercase tracking-wider text-ok font-semibold mb-2">
+            ✓ Aceptadas ({yaAceptadas.length})
+          </div>
+          <div className="space-y-3">
+            {yaAceptadas.map(s => (
+              <SugerenciaCard
+                key={s.id_unico}
+                sugerencia={s}
+                movsPorId={movsPorId}
+                aceptada
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {rechazadas.size > 0 && (
+        <div className="text-2xs text-ink-400 italic">
+          {rechazadas.size} sugerencia(s) rechazada(s) — los movimientos siguen pendientes
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SugerenciaCard({
+  sugerencia: s,
+  movsPorId,
+  onAceptar,
+  onRechazar,
+  aceptada = false,
+}: {
+  sugerencia: import("@/lib/motor-conciliacion").SugerenciaAgrupada
+  movsPorId: Map<string, import("@/types").MovimientoResultado>
+  onAceptar?: () => void
+  onRechazar?: () => void
+  aceptada?: boolean
+}) {
+  const movsN = s.movs_lado_n.map(id => movsPorId.get(id)).filter(Boolean) as import("@/types").MovimientoResultado[]
+  const movUno = movsPorId.get(s.mov_lado_1)
+  const fmtNum = (n: number) => n.toLocaleString("es-AR", { minimumFractionDigits: 2 })
+
+  const scoreColor = s.score_confianza >= 70 ? "text-ok bg-ok-light" :
+                     s.score_confianza >= 60 ? "text-warn bg-warn-light" :
+                     "text-danger bg-danger-light"
+
+  return (
+    <div className={`card border ${aceptada ? "border-ok/30 bg-ok-light/10" : "border-ink-200"}`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-2xs uppercase tracking-wider text-ink-500 font-semibold">
+            {s.tipo === "N_a_1" ? `${movsN.length} de compañía → 1 de contraparte` : `1 de compañía → ${movsN.length} de contraparte`}
+          </span>
+          <span className={`text-2xs font-bold px-1.5 py-0.5 rounded ${scoreColor}`}>
+            {s.score_confianza.toFixed(0)}% confianza
+          </span>
+        </div>
+        {!aceptada && (
+          <div className="flex gap-2">
+            <button onClick={onRechazar} className="btn btn-secondary text-2xs py-1 px-2">
+              Rechazar
+            </button>
+            <button onClick={onAceptar} className="btn btn-primary text-2xs py-1 px-2">
+              ✓ Aceptar match
+            </button>
+          </div>
+        )}
+        {aceptada && (
+          <span className="text-2xs text-ok font-semibold">✓ Aceptado</span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Lado N */}
+        <div className="border border-ink-200 rounded-md p-2 bg-ink-50">
+          <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold mb-2">
+            {s.origen_n === "compania" ? "COMPAÑÍA" : "CONTRAPARTE"} · {movsN.length} comprobantes
+          </div>
+          <div className="space-y-1">
+            {movsN.map(m => (
+              <div key={m.id_unico} className="flex items-center gap-2 text-2xs py-1 border-b border-ink-100 last:border-0">
+                <span className="text-ink-500 font-mono">{m.fecha ? new Date(m.fecha).toLocaleDateString("es-AR") : "—"}</span>
+                <span className="flex-1 truncate">{m.tipo_original}</span>
+                <span className="font-mono">{m.comprobante_raw}</span>
+                <span className="num text-right font-semibold">{fmtNum(Math.abs(m.importe_ars))}</span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-ink-300 font-semibold">
+              <span>Total</span>
+              <span className="num">{fmtNum(s.total_lado_n_ars)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Lado 1 */}
+        <div className="border border-accent/30 rounded-md p-2 bg-accent/5">
+          <div className="text-2xs uppercase tracking-wider text-accent font-semibold mb-2">
+            {s.origen_1 === "compania" ? "COMPAÑÍA" : "CONTRAPARTE"} · 1 movimiento
+          </div>
+          {movUno && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-2xs py-1">
+                <span className="text-ink-500 font-mono">{movUno.fecha ? new Date(movUno.fecha).toLocaleDateString("es-AR") : "—"}</span>
+                <span className="flex-1 truncate">{movUno.tipo_original}</span>
+                <span className="font-mono">{movUno.comprobante_raw}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs pt-1 border-t border-accent/30 font-semibold">
+                <span>Importe</span>
+                <span className="num">{fmtNum(s.importe_lado_1_ars)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Diferencia */}
+      <div className="mt-3 flex items-center justify-between text-2xs">
+        <span className="text-ink-500">Diferencia:</span>
+        <span className={`font-mono font-semibold ${Math.abs(s.diferencia_ars) < 1 ? "text-ok" : "text-warn"}`}>
+          {Math.abs(s.diferencia_ars) < 1 ? "✓ Match exacto" : `${fmtNum(s.diferencia_ars)} ARS`}
+        </span>
+      </div>
+    </div>
   )
 }

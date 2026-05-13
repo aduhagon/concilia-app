@@ -99,6 +99,14 @@ export default function EditarPlantillaPage() {
   async function guardar() {
     if (!plantilla) return
     setGuardando(true)
+
+    // Leer versión anterior para comparar
+    const { data: anterior } = await supabase
+      .from("plantillas_proveedor")
+      .select("mapeo_compania, mapeo_contraparte, reglas_tipos, tipos_sin_contraparte_compania, tipos_sin_contraparte_externa, config")
+      .eq("id", plantilla.id)
+      .single()
+
     const { error } = await supabase
       .from("plantillas_proveedor")
       .update({
@@ -111,11 +119,90 @@ export default function EditarPlantillaPage() {
         updated_at: new Date().toISOString(),
       })
       .eq("id", plantilla.id)
-    setGuardando(false)
+
     if (error) {
+      setGuardando(false)
       alert("Error al guardar: " + error.message)
       return
     }
+
+    // Registrar en historial qué cambió
+    if (anterior) {
+      const { data: { user } } = await supabase.auth.getUser()
+      const registros = []
+
+      // Detectar cambios en mapeo
+      if (JSON.stringify(anterior.mapeo_compania) !== JSON.stringify(plantilla.mapeo_compania)) {
+        registros.push({
+          plantilla_id: plantilla.id,
+          usuario_id: user?.id ?? null,
+          accion: "modificada" as const,
+          campo_modificado: "mapeo_compania",
+          valor_anterior: anterior.mapeo_compania,
+          valor_nuevo: plantilla.mapeo_compania,
+        })
+      }
+      if (JSON.stringify(anterior.mapeo_contraparte) !== JSON.stringify(plantilla.mapeo_contraparte)) {
+        registros.push({
+          plantilla_id: plantilla.id,
+          usuario_id: user?.id ?? null,
+          accion: "modificada" as const,
+          campo_modificado: "mapeo_contraparte",
+          valor_anterior: anterior.mapeo_contraparte,
+          valor_nuevo: plantilla.mapeo_contraparte,
+        })
+      }
+
+      // Detectar reglas agregadas/eliminadas
+      const reglasAnt = (anterior.reglas_tipos ?? []) as ReglaTipo[]
+      const reglasNew = plantilla.reglas_tipos
+      const idsAnt = new Set(reglasAnt.map((r: ReglaTipo) => r.id))
+      const idsNew = new Set(reglasNew.map(r => r.id))
+
+      for (const r of reglasNew) {
+        if (!idsAnt.has(r.id)) {
+          registros.push({
+            plantilla_id: plantilla.id,
+            usuario_id: user?.id ?? null,
+            accion: "regla_agregada" as const,
+            campo_modificado: r.id,
+            valor_anterior: null,
+            valor_nuevo: r,
+          })
+        }
+      }
+      for (const r of reglasAnt) {
+        if (!idsNew.has(r.id)) {
+          registros.push({
+            plantilla_id: plantilla.id,
+            usuario_id: user?.id ?? null,
+            accion: "regla_eliminada" as const,
+            campo_modificado: r.id,
+            valor_anterior: r,
+            valor_nuevo: null,
+          })
+        }
+      }
+
+      // Detectar tipos sin contraparte modificados
+      if (JSON.stringify(anterior.tipos_sin_contraparte_compania) !== JSON.stringify(plantilla.tipos_sin_contraparte_compania) ||
+          JSON.stringify(anterior.tipos_sin_contraparte_externa) !== JSON.stringify(plantilla.tipos_sin_contraparte_externa)) {
+        registros.push({
+          plantilla_id: plantilla.id,
+          usuario_id: user?.id ?? null,
+          accion: "modificada" as const,
+          campo_modificado: "tipos_sin_contraparte",
+          valor_anterior: { compania: anterior.tipos_sin_contraparte_compania, externa: anterior.tipos_sin_contraparte_externa },
+          valor_nuevo: { compania: plantilla.tipos_sin_contraparte_compania, externa: plantilla.tipos_sin_contraparte_externa },
+        })
+      }
+
+      if (registros.length > 0) {
+        await supabase.from("plantillas_historial").insert(registros)
+      }
+    }
+
+    setGuardando(false)
     alert("Plantilla guardada")
   }
 

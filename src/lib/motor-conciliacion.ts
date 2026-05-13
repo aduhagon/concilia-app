@@ -9,12 +9,9 @@ import type {
 import { construirClave } from "./constructor-clave"
 
 // ============================================================
-// MOTOR DE CONCILIACIÓN v2 — con log de decisiones
+// MOTOR DE CONCILIACIÓN v3 — con nivel 4 agrupado
 // ============================================================
 
-type Lado = "compania" | "contraparte"
-
-// Log de cada decisión tomada por el motor
 export type DecisionMotor = {
   mov_compania_id_unico: string
   mov_contraparte_id_unico: string
@@ -27,8 +24,26 @@ export type DecisionMotor = {
   candidatos_descartados?: { id: string; motivo: string }[]
 }
 
+export type SugerenciaAgrupada = {
+  id_unico: string
+  tipo: "N_a_1" | "1_a_N"
+  movs_lado_n: string[]
+  mov_lado_1: string
+  origen_n: "compania" | "contraparte"
+  origen_1: "compania" | "contraparte"
+  total_lado_n_ars: number
+  total_lado_n_usd: number
+  importe_lado_1_ars: number
+  importe_lado_1_usd: number
+  diferencia_ars: number
+  diferencia_usd: number
+  score_confianza: number
+  regla_id?: string
+}
+
 export type ResultadoConciliacionConLog = ResultadoConciliacion & {
   decisiones: DecisionMotor[]
+  sugerencias_agrupadas: SugerenciaAgrupada[]
 }
 
 export function conciliar(
@@ -36,11 +51,10 @@ export function conciliar(
   plantilla: PlantillaProveedor
 ): ResultadoConciliacionConLog {
   const decisiones: DecisionMotor[] = []
+  const sugerencias: SugerenciaAgrupada[] = []
 
-  // 1. CLASIFICAR
   const clasificados = movimientos.map((m) => clasificar(m, plantilla))
 
-  // 2. CONSTRUIR CLAVES
   for (const m of clasificados) {
     const regla = encontrarReglaPorId(plantilla, m.regla_id)
     if (!regla || regla.metodo_match !== "clave") continue
@@ -49,7 +63,6 @@ export function conciliar(
     m.clave_calculada = construirClave(m.raw, constructor)
   }
 
-  // 3. INICIALIZAR RESULTADOS
   const resultados: MovimientoResultado[] = clasificados.map((m) => ({
     ...m,
     estado: m.tipo_normalizado === "AJUSTE_PROPIO"
@@ -60,7 +73,6 @@ export function conciliar(
     match_id: null,
   }))
 
-  // 4. MATCHEAR por regla
   for (const regla of plantilla.reglas_tipos) {
     const compania = resultados.filter(
       (r) => r.regla_id === regla.id && r.origen === "compania" && r.estado === "pendiente"
@@ -77,13 +89,27 @@ export function conciliar(
     }
   }
 
-  const resumen = construirResumen(resultados)
-  return { movimientos: resultados, resumen, decisiones }
-}
+  // NIVEL 4 — Match agrupado (sugerencias, no automático)
+  for (const regla of plantilla.reglas_tipos) {
+    if (regla.metodo_match !== "importe_fecha") continue
 
-// ----------------------------------------------------------------
-// Clasificación
-// ----------------------------------------------------------------
+    const pendCompania = resultados.filter(
+      r => r.regla_id === regla.id && r.origen === "compania" && r.estado === "pendiente"
+    )
+    const pendContraparte = resultados.filter(
+      r => r.regla_id === regla.id && r.origen === "contraparte" && r.estado === "pendiente"
+    )
+
+    const ventana = regla.ventana_dias ?? plantilla.config.ventana_dias_default
+    const tolerancia = plantilla.config.tolerancia_importe
+
+    buscarAgrupados(pendCompania, pendContraparte, ventana, tolerancia, "compania", regla.id, sugerencias)
+    buscarAgrupados(pendContraparte, pendCompania, ventana, tolerancia, "contraparte", regla.id, sugerencias)
+  }
+
+  const resumen = construirResumen(resultados)
+  return { movimientos: resultados, resumen, decisiones, sugerencias_agrupadas: sugerencias }
+}
 
 function clasificar(m: MovimientoNorm, plantilla: PlantillaProveedor): MovimientoNorm {
   const tipoUp = m.tipo_original.toUpperCase().trim()
@@ -114,10 +140,6 @@ function encontrarReglaPorId(p: PlantillaProveedor, id: string | null): ReglaTip
   if (!id) return null
   return p.reglas_tipos.find((r) => r.id === id) ?? null
 }
-
-// ----------------------------------------------------------------
-// Match por clave — Nivel 1 (exacto) y Nivel 2 (clave + tolerancia)
-// ----------------------------------------------------------------
 
 function matchPorClave(
   compania: MovimientoResultado[],
@@ -160,7 +182,6 @@ function matchPorClave(
     cont.diferencia_ars = dif_ars
     cont.diferencia_usd = dif_usd
 
-    // Nivel 1 = exacto (dif_ars y dif_usd = 0), Nivel 2 = clave con diferencia
     const nivel = estado === "conciliado" ? 1 : 2
     const score = estado === "conciliado" ? 100 :
       estado === "conciliado_dif_ars" ? 85 : 60
@@ -178,10 +199,6 @@ function matchPorClave(
     })
   }
 }
-
-// ----------------------------------------------------------------
-// Match por importe + fecha — Nivel 3
-// ----------------------------------------------------------------
 
 function matchPorImporteFecha(
   compania: MovimientoResultado[],
@@ -254,8 +271,133 @@ function matchPorImporteFecha(
 }
 
 // ----------------------------------------------------------------
-// Comparación de importes
+// Nivel 4 — Match agrupado (N-a-1 o 1-a-N)
 // ----------------------------------------------------------------
+
+const MAX_TAMANO_GRUPO = 5
+const MAX_GRUPOS_POR_REGLA = 30
+
+function buscarAgrupados(
+  ladoN: MovimientoResultado[],
+  ladoUno: MovimientoResultado[],
+  ventanaDias: number,
+  tolerancia: number,
+  origenN: "compania" | "contraparte",
+  reglaId: string,
+  sugerencias: SugerenciaAgrupada[]
+) {
+  if (ladoN.length < 2 || ladoUno.length === 0) return
+  if (ladoN.length > 25) return
+
+  const sugerenciasReglaPrevias = sugerencias.filter(s => s.regla_id === reglaId).length
+  const movsUsados = new Set<string>()
+  let sugerenciasGeneradas = 0
+
+  for (const movUno of ladoUno) {
+    if (sugerenciasGeneradas + sugerenciasReglaPrevias >= MAX_GRUPOS_POR_REGLA) break
+
+    const importeObjetivo = Math.abs(movUno.importe_ars) || Math.abs(movUno.importe_usd)
+    if (importeObjetivo < 0.01) continue
+
+    const candidatos = ladoN.filter(m => {
+      if (movsUsados.has(m.id_unico)) return false
+      const imp = Math.abs(m.importe_ars) || Math.abs(m.importe_usd)
+      if (imp >= importeObjetivo + tolerancia) return false
+      if (imp < 0.01) return false
+      if (movUno.fecha && m.fecha) {
+        const dias = Math.abs((movUno.fecha.getTime() - m.fecha.getTime()) / 86400000)
+        if (dias > ventanaDias * 3) return false
+      }
+      return true
+    })
+
+    if (candidatos.length < 2) continue
+
+    const combo = buscarCombinacionSuma(candidatos, importeObjetivo, tolerancia, MAX_TAMANO_GRUPO)
+    if (!combo || combo.length < 2) continue
+
+    const totalArs = combo.reduce((a, m) => a + Math.abs(m.importe_ars), 0)
+    const totalUsd = combo.reduce((a, m) => a + Math.abs(m.importe_usd), 0)
+    const importeUnoArs = Math.abs(movUno.importe_ars)
+    const importeUnoUsd = Math.abs(movUno.importe_usd)
+
+    sugerencias.push({
+      id_unico: `sugAgr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      tipo: origenN === "compania" ? "N_a_1" : "1_a_N",
+      movs_lado_n: combo.map(m => m.id_unico),
+      mov_lado_1: movUno.id_unico,
+      origen_n: origenN,
+      origen_1: origenN === "compania" ? "contraparte" : "compania",
+      total_lado_n_ars: totalArs,
+      total_lado_n_usd: totalUsd,
+      importe_lado_1_ars: importeUnoArs,
+      importe_lado_1_usd: importeUnoUsd,
+      diferencia_ars: totalArs - importeUnoArs,
+      diferencia_usd: totalUsd - importeUnoUsd,
+      score_confianza: calcularScoreAgrupado(combo.length, totalArs, importeUnoArs, tolerancia),
+      regla_id: reglaId,
+    })
+
+    for (const m of combo) movsUsados.add(m.id_unico)
+    movsUsados.add(movUno.id_unico)
+    sugerenciasGeneradas++
+  }
+}
+
+function buscarCombinacionSuma(
+  items: MovimientoResultado[],
+  objetivo: number,
+  tolerancia: number,
+  maxItems: number
+): MovimientoResultado[] | null {
+  const ordenados = [...items].sort((a, b) => {
+    const ia = Math.abs(a.importe_ars) || Math.abs(a.importe_usd)
+    const ib = Math.abs(b.importe_ars) || Math.abs(b.importe_usd)
+    return ib - ia
+  })
+
+  let mejor: MovimientoResultado[] | null = null
+  let mejorDif = Infinity
+
+  function backtrack(idx: number, sumaActual: number, seleccionados: MovimientoResultado[]) {
+    const dif = Math.abs(sumaActual - objetivo)
+    if (dif <= tolerancia && seleccionados.length >= 2) {
+      if (dif < mejorDif) {
+        mejor = [...seleccionados]
+        mejorDif = dif
+      }
+    }
+
+    if (seleccionados.length >= maxItems) return
+    if (sumaActual > objetivo + tolerancia) return
+    if (idx >= ordenados.length) return
+    if (mejorDif === 0) return
+
+    const m = ordenados[idx]
+    const imp = Math.abs(m.importe_ars) || Math.abs(m.importe_usd)
+    seleccionados.push(m)
+    backtrack(idx + 1, sumaActual + imp, seleccionados)
+    seleccionados.pop()
+
+    backtrack(idx + 1, sumaActual, seleccionados)
+  }
+
+  backtrack(0, 0, [])
+  return mejor
+}
+
+function calcularScoreAgrupado(
+  cantItems: number,
+  total: number,
+  objetivo: number,
+  tolerancia: number
+): number {
+  const difRelativa = Math.abs(total - objetivo) / Math.max(objetivo, 1)
+  const baseScore = 75
+  const penalizacionTamano = Math.min((cantItems - 2) * 3, 15)
+  const penalizacionDif = Math.min(difRelativa * 100, 20)
+  return Math.max(50, baseScore - penalizacionTamano - penalizacionDif)
+}
 
 function compararImportes(
   cmp: MovimientoResultado,
@@ -283,10 +425,6 @@ function compararImportes(
   if (arsOk) return { estado: "conciliado", dif_ars, dif_usd }
   return { estado: "conciliado_dif_real", dif_ars, dif_usd }
 }
-
-// ----------------------------------------------------------------
-// Resumen
-// ----------------------------------------------------------------
 
 function construirResumen(movs: MovimientoResultado[]): ResultadoConciliacion["resumen"] {
   const compania = movs.filter((m) => m.origen === "compania")
@@ -318,10 +456,6 @@ function construirResumen(movs: MovimientoResultado[]): ResultadoConciliacion["r
     diferencia_final_ars: saldoCompania - saldoContraparte,
   }
 }
-
-// ----------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------
 
 export function asignarIds<T extends { id_unico?: string }>(items: T[]): (T & { id_unico: string })[] {
   return items.map((item, idx) => ({

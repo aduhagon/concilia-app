@@ -45,6 +45,9 @@ export default function EditarPlantillaPage() {
     campo_modificado: string | null
     created_at: string
     usuario_id: string | null
+    valor_anterior: any
+    valor_nuevo: any
+    nombre_usuario: string | null
   }[]>([])
   const [cargandoHist, setCargandoHist] = useState(false)
 
@@ -92,17 +95,32 @@ export default function EditarPlantillaPage() {
 
     const { data, error } = await supabase
       .from("plantillas_historial")
-      .select("id, accion, campo_modificado, created_at, usuario_id")
+      .select("id, accion, campo_modificado, created_at, usuario_id, valor_anterior, valor_nuevo")
       .eq("plantilla_id", plantillaId)
       .order("created_at", { ascending: false })
       .limit(50)
 
-    if (error) {
-      console.error("Error cargando historial:", error)
+    if (error || !data) {
       setHistorial([])
-    } else {
-      setHistorial(data ?? [])
+      setCargandoHist(false)
+      return
     }
+
+    // Resolver nombres de usuarios
+    const userIds = Array.from(new Set(data.map(h => h.usuario_id).filter(Boolean) as string[]))
+    const nombresPorId: Record<string, string> = {}
+    if (userIds.length > 0) {
+      const { data: users } = await supabase
+        .from("usuarios")
+        .select("id, nombre")
+        .in("id", userIds)
+      for (const u of users ?? []) nombresPorId[u.id] = u.nombre
+    }
+
+    setHistorial(data.map(h => ({
+      ...h,
+      nombre_usuario: h.usuario_id ? (nombresPorId[h.usuario_id] ?? null) : null,
+    })))
     setCargandoHist(false)
   }
 
@@ -304,12 +322,12 @@ export default function EditarPlantillaPage() {
             <div className="divide-y divide-ink-100">
               {historial.map(h => {
                 const accionLabel: Record<string, string> = {
-                  modificada: "Plantilla modificada",
-                  regla_agregada: "Regla agregada",
-                  regla_eliminada: "Regla eliminada",
-                  tipo_agregado: "Tipo agregado",
-                  tipo_eliminado: "Tipo eliminado",
-                  creada: "Plantilla creada",
+                  modificada: "Modificó",
+                  regla_agregada: "Agregó regla",
+                  regla_eliminada: "Eliminó regla",
+                  tipo_agregado: "Agregó tipo",
+                  tipo_eliminado: "Eliminó tipo",
+                  creada: "Creó la plantilla",
                 }
                 const campoLabel: Record<string, string> = {
                   mapeo_compania: "Mapeo compañía",
@@ -317,18 +335,23 @@ export default function EditarPlantillaPage() {
                   tipos_sin_contraparte: "Tipos sin contraparte",
                 }
                 return (
-                  <div key={h.id} className="flex items-start gap-3 py-2.5">
+                  <div key={h.id} className="flex items-start gap-3 py-3">
                     <div className="w-1.5 h-1.5 rounded-full bg-accent mt-1.5 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 space-y-1">
                       <div className="text-xs">
-                        <span className="font-semibold text-ink-700">{accionLabel[h.accion] ?? h.accion}</span>
+                        <span className="font-semibold text-ink-700">{h.nombre_usuario ?? "Usuario desconocido"}</span>
+                        <span className="text-ink-500"> · {accionLabel[h.accion] ?? h.accion}</span>
                         {h.campo_modificado && (
                           <span className="text-ink-400">
-                            {" · "}{campoLabel[h.campo_modificado] ?? h.campo_modificado}
+                            {" "}— {campoLabel[h.campo_modificado] ?? h.campo_modificado}
                           </span>
                         )}
                       </div>
-                      <div className="text-2xs text-ink-400 flex items-center gap-1 mt-0.5">
+
+                      {/* Diff visual */}
+                      <DiffHistorial accion={h.accion} campo={h.campo_modificado} anterior={h.valor_anterior} nuevo={h.valor_nuevo} />
+
+                      <div className="text-2xs text-ink-400 flex items-center gap-1">
                         <Clock size={10} />
                         {new Date(h.created_at).toLocaleString("es-AR")}
                       </div>
@@ -729,4 +752,79 @@ function tiposUnicos(filas: Record<string, unknown>[], col: string): string[] {
     if (v !== null && v !== undefined && v !== "") set.add(String(v).trim())
   }
   return Array.from(set).sort()
+}
+
+function DiffHistorial({ accion, campo, anterior, nuevo }: {
+  accion: string
+  campo: string | null
+  anterior: any
+  nuevo: any
+}) {
+  // Tipos sin contraparte: comparar listas
+  if (campo === "tipos_sin_contraparte" && anterior && nuevo) {
+    const setAntCmp = new Set<string>(anterior.compania ?? [])
+    const setNewCmp = new Set<string>(nuevo.compania ?? [])
+    const setAntExt = new Set<string>(anterior.externa ?? [])
+    const setNewExt = new Set<string>(nuevo.externa ?? [])
+
+    const agregadosCmp = [...setNewCmp].filter(x => !setAntCmp.has(x))
+    const eliminadosCmp = [...setAntCmp].filter(x => !setNewCmp.has(x))
+    const agregadosExt = [...setNewExt].filter(x => !setAntExt.has(x))
+    const eliminadosExt = [...setAntExt].filter(x => !setNewExt.has(x))
+
+    return (
+      <div className="text-2xs space-y-0.5 pl-2 border-l-2 border-ink-100">
+        {agregadosCmp.map(t => <div key={"a-c-"+t}><span className="text-ok">+ Compañía:</span> {t}</div>)}
+        {eliminadosCmp.map(t => <div key={"d-c-"+t}><span className="text-danger">− Compañía:</span> {t}</div>)}
+        {agregadosExt.map(t => <div key={"a-e-"+t}><span className="text-ok">+ Externa:</span> {t}</div>)}
+        {eliminadosExt.map(t => <div key={"d-e-"+t}><span className="text-danger">− Externa:</span> {t}</div>)}
+      </div>
+    )
+  }
+
+  // Regla agregada/eliminada
+  if (accion === "regla_agregada" && nuevo) {
+    return (
+      <div className="text-2xs pl-2 border-l-2 border-ok/30">
+        <span className="text-ok font-semibold">+ </span>
+        <span className="font-semibold">{nuevo.label ?? nuevo.id}</span>
+        {nuevo.tipo_compania?.length > 0 && <span className="text-ink-500"> · Comp: {nuevo.tipo_compania.join(", ")}</span>}
+        {nuevo.tipo_contraparte?.length > 0 && <span className="text-ink-500"> · Cont: {nuevo.tipo_contraparte.join(", ")}</span>}
+      </div>
+    )
+  }
+  if (accion === "regla_eliminada" && anterior) {
+    return (
+      <div className="text-2xs pl-2 border-l-2 border-danger/30">
+        <span className="text-danger font-semibold">− </span>
+        <span className="font-semibold">{anterior.label ?? anterior.id}</span>
+      </div>
+    )
+  }
+
+  // Mapeos: comparar campo por campo
+  if ((campo === "mapeo_compania" || campo === "mapeo_contraparte") && anterior && nuevo) {
+    const cambios: { campo: string; antes: string; despues: string }[] = []
+    const keys = new Set([...Object.keys(anterior), ...Object.keys(nuevo)])
+    for (const k of keys) {
+      const a = anterior[k]
+      const n = nuevo[k]
+      if (JSON.stringify(a) !== JSON.stringify(n)) {
+        cambios.push({ campo: k, antes: a ?? "—", despues: n ?? "—" })
+      }
+    }
+    return (
+      <div className="text-2xs space-y-0.5 pl-2 border-l-2 border-ink-100">
+        {cambios.map((c, i) => (
+          <div key={i}>
+            <span className="font-mono text-ink-500">{c.campo}:</span>{" "}
+            <span className="text-danger line-through">{c.antes}</span>{" → "}
+            <span className="text-ok">{c.despues}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return null
 }

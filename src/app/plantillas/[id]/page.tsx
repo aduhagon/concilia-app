@@ -281,6 +281,66 @@ export default function EditarPlantillaPage() {
         </div>
       </div>
 
+      {/* Panel historial */}
+      {mostrarHistorial && (
+        <div className="card border-ink-200 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold flex items-center gap-2">
+              <History size={14} className="text-ink-400" />
+              Historial de cambios
+            </div>
+            <button onClick={() => setMostrarHistorial(false)} className="text-2xs text-ink-400 hover:text-accent">
+              Cerrar
+            </button>
+          </div>
+
+          {cargandoHist ? (
+            <div className="text-xs text-ink-400 py-4 text-center">Cargando…</div>
+          ) : historial.length === 0 ? (
+            <div className="text-xs text-ink-400 py-4 text-center italic">
+              Sin cambios registrados — los cambios se registran cada vez que guardás la plantilla.
+            </div>
+          ) : (
+            <div className="divide-y divide-ink-100">
+              {historial.map(h => {
+                const accionLabel: Record<string, string> = {
+                  modificada: "Plantilla modificada",
+                  regla_agregada: "Regla agregada",
+                  regla_eliminada: "Regla eliminada",
+                  tipo_agregado: "Tipo agregado",
+                  tipo_eliminado: "Tipo eliminado",
+                  creada: "Plantilla creada",
+                }
+                const campoLabel: Record<string, string> = {
+                  mapeo_compania: "Mapeo compañía",
+                  mapeo_contraparte: "Mapeo contraparte",
+                  tipos_sin_contraparte: "Tipos sin contraparte",
+                }
+                return (
+                  <div key={h.id} className="flex items-start gap-3 py-2.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-accent mt-1.5 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs">
+                        <span className="font-semibold text-ink-700">{accionLabel[h.accion] ?? h.accion}</span>
+                        {h.campo_modificado && (
+                          <span className="text-ink-400">
+                            {" · "}{campoLabel[h.campo_modificado] ?? h.campo_modificado}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-2xs text-ink-400 flex items-center gap-1 mt-0.5">
+                        <Clock size={10} />
+                        {new Date(h.created_at).toLocaleString("es-AR")}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Subir muestras */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <SubirMuestra

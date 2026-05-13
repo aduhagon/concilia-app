@@ -53,10 +53,18 @@ export function conciliar(
   const decisiones: DecisionMotor[] = []
   const sugerencias: SugerenciaAgrupada[] = []
 
-  const clasificados = movimientos.map((m) => clasificar(m, plantilla))
+  // Ordenar reglas por prioridad (menor número = más prioridad). Default 100.
+  const plantillaOrdenada: PlantillaProveedor = {
+    ...plantilla,
+    reglas_tipos: [...plantilla.reglas_tipos].sort(
+      (a, b) => (a.prioridad ?? 100) - (b.prioridad ?? 100)
+    )
+  }
+
+  const clasificados = movimientos.map((m) => clasificar(m, plantillaOrdenada))
 
   for (const m of clasificados) {
-    const regla = encontrarReglaPorId(plantilla, m.regla_id)
+    const regla = encontrarReglaPorId(plantillaOrdenada, m.regla_id)
     if (!regla || regla.metodo_match !== "clave") continue
     const constructor =
       m.origen === "compania" ? regla.clave_compania : regla.clave_contraparte
@@ -73,7 +81,7 @@ export function conciliar(
     match_id: null,
   }))
 
-  for (const regla of plantilla.reglas_tipos) {
+  for (const regla of plantillaOrdenada.reglas_tipos) {
     const compania = resultados.filter(
       (r) => r.regla_id === regla.id && r.origen === "compania" && r.estado === "pendiente"
     )
@@ -82,15 +90,15 @@ export function conciliar(
     )
 
     if (regla.metodo_match === "clave") {
-      matchPorClave(compania, contraparte, plantilla.config.tolerancia_importe, plantilla.config.moneda_separada, decisiones)
+      matchPorClave(compania, contraparte, plantillaOrdenada.config.tolerancia_importe, plantillaOrdenada.config.moneda_separada, decisiones)
     } else if (regla.metodo_match === "importe_fecha") {
-      const ventana = regla.ventana_dias ?? plantilla.config.ventana_dias_default
-      matchPorImporteFecha(compania, contraparte, ventana, plantilla.config.tolerancia_importe, decisiones)
+      const ventana = regla.ventana_dias ?? plantillaOrdenada.config.ventana_dias_default
+      matchPorImporteFecha(compania, contraparte, ventana, plantillaOrdenada.config.tolerancia_importe, decisiones)
     }
   }
 
   // NIVEL 4 — Match agrupado (sugerencias, no automático)
-  for (const regla of plantilla.reglas_tipos) {
+  for (const regla of plantillaOrdenada.reglas_tipos) {
     if (regla.metodo_match !== "importe_fecha") continue
 
     const pendCompania = resultados.filter(
@@ -100,8 +108,8 @@ export function conciliar(
       r => r.regla_id === regla.id && r.origen === "contraparte" && r.estado === "pendiente"
     )
 
-    const ventana = regla.ventana_dias ?? plantilla.config.ventana_dias_default
-    const tolerancia = plantilla.config.tolerancia_importe
+    const ventana = regla.ventana_dias ?? plantillaOrdenada.config.ventana_dias_default
+    const tolerancia = plantillaOrdenada.config.tolerancia_importe
 
     buscarAgrupados(pendCompania, pendContraparte, ventana, tolerancia, "compania", regla.id, sugerencias)
     buscarAgrupados(pendContraparte, pendCompania, ventana, tolerancia, "contraparte", regla.id, sugerencias)

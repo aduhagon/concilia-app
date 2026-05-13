@@ -65,6 +65,7 @@ export type ReglaTipo = {
   clave_compania?: ConstructorClave
   clave_contraparte?: ConstructorClave
   ventana_dias?: number                                                     // solo si metodo_match = "importe_fecha"
+  prioridad?: number                                                        // orden de evaluación; menor número = más prioridad. Default: 100
 }
 
 export type ConfigPlantilla = {

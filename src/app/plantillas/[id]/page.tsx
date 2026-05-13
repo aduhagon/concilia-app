@@ -14,7 +14,7 @@ import type {
   ReglaTipo,
   ConstructorClave,
 } from "@/types"
-import { ArrowLeft, Save, Upload, Plus, Trash2, ChevronDown, ChevronUp, FileWarning, History, Clock } from "lucide-react"
+import { ArrowLeft, Save, Upload, Plus, Trash2, ChevronDown, ChevronUp, FileWarning, History, Clock, ArrowUp, ArrowDown } from "lucide-react"
 import Link from "next/link"
 
 const MAPEO_VACIO_CMP: MapeoCompania = {
@@ -438,22 +438,48 @@ export default function EditarPlantillaPage() {
           </div>
         )}
 
-        {plantilla.reglas_tipos.map((regla, idx) => (
-          <ReglaCard
-            key={regla.id}
-            regla={regla}
-            abierta={reglaAbierta === regla.id}
-            onToggle={() => setReglaAbierta(reglaAbierta === regla.id ? null : regla.id)}
-            onChange={(parcial) => actualizarRegla(idx, parcial)}
-            onDelete={() => eliminarRegla(idx)}
-            columnasCmp={muestraCmp.columnas}
-            columnasCont={muestraCont.columnas}
-            filaMuestraCmp={muestraCmp.filas[1]}
-            filaMuestraCont={muestraCont.filas[1]}
-            tiposCmpEnArchivo={tiposUnicos(muestraCmp.filas, plantilla.mapeo_compania.tipo)}
-            tiposContEnArchivo={tiposUnicos(muestraCont.filas, plantilla.mapeo_contraparte.tipo)}
-          />
-        ))}
+        {[...plantilla.reglas_tipos]
+          .map((r, originalIdx) => ({ regla: r, originalIdx }))
+          .sort((a, b) => (a.regla.prioridad ?? 100) - (b.regla.prioridad ?? 100))
+          .map(({ regla, originalIdx }, posicionVisible) => {
+            const reglasOrdenadas = [...plantilla.reglas_tipos].sort((a, b) => (a.prioridad ?? 100) - (b.prioridad ?? 100))
+            const esPrimero = posicionVisible === 0
+            const esUltimo = posicionVisible === reglasOrdenadas.length - 1
+            return (
+              <ReglaCard
+                key={regla.id}
+                regla={regla}
+                posicion={posicionVisible + 1}
+                totalReglas={reglasOrdenadas.length}
+                abierta={reglaAbierta === regla.id}
+                onToggle={() => setReglaAbierta(reglaAbierta === regla.id ? null : regla.id)}
+                onChange={(parcial) => actualizarRegla(originalIdx, parcial)}
+                onDelete={() => eliminarRegla(originalIdx)}
+                onSubirPrioridad={esPrimero ? undefined : () => {
+                  // Asignar prioridades secuenciales 10, 20, 30... y swap con el anterior
+                  const conPrio = reglasOrdenadas.map((r, i) => ({ ...r, prioridad: (i + 1) * 10 }))
+                  // Swap
+                  const tmp = conPrio[posicionVisible].prioridad!
+                  conPrio[posicionVisible].prioridad = conPrio[posicionVisible - 1].prioridad
+                  conPrio[posicionVisible - 1].prioridad = tmp
+                  setPlantilla({ ...plantilla, reglas_tipos: conPrio })
+                }}
+                onBajarPrioridad={esUltimo ? undefined : () => {
+                  const conPrio = reglasOrdenadas.map((r, i) => ({ ...r, prioridad: (i + 1) * 10 }))
+                  const tmp = conPrio[posicionVisible].prioridad!
+                  conPrio[posicionVisible].prioridad = conPrio[posicionVisible + 1].prioridad
+                  conPrio[posicionVisible + 1].prioridad = tmp
+                  setPlantilla({ ...plantilla, reglas_tipos: conPrio })
+                }}
+                columnasCmp={muestraCmp.columnas}
+                columnasCont={muestraCont.columnas}
+                filaMuestraCmp={muestraCmp.filas[1]}
+                filaMuestraCont={muestraCont.filas[1]}
+                tiposCmpEnArchivo={tiposUnicos(muestraCmp.filas, plantilla.mapeo_compania.tipo)}
+                tiposContEnArchivo={tiposUnicos(muestraCont.filas, plantilla.mapeo_contraparte.tipo)}
+              />
+            )
+          })}
       </section>
 
       {/* Tipos sin contraparte (ajustes propios) */}
@@ -541,15 +567,20 @@ function MapeoColumnas({
 }
 
 function ReglaCard({
-  regla, abierta, onToggle, onChange, onDelete,
+  regla, posicion, totalReglas, abierta, onToggle, onChange, onDelete,
+  onSubirPrioridad, onBajarPrioridad,
   columnasCmp, columnasCont, filaMuestraCmp, filaMuestraCont,
   tiposCmpEnArchivo, tiposContEnArchivo,
 }: {
   regla: ReglaTipo
+  posicion: number
+  totalReglas: number
   abierta: boolean
   onToggle: () => void
   onChange: (parcial: Partial<ReglaTipo>) => void
   onDelete: () => void
+  onSubirPrioridad?: () => void
+  onBajarPrioridad?: () => void
   columnasCmp: string[]
   columnasCont: string[]
   filaMuestraCmp?: Record<string, unknown>
@@ -560,6 +591,29 @@ function ReglaCard({
   return (
     <div className="card-tight">
       <div className="flex items-center justify-between gap-3">
+        {/* Controles de prioridad */}
+        <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
+          <button
+            onClick={onSubirPrioridad}
+            disabled={!onSubirPrioridad}
+            className="text-ink-400 hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+            title="Subir prioridad"
+          >
+            <ArrowUp size={11} />
+          </button>
+          <span className="text-2xs font-mono font-bold text-ink-500 bg-ink-100 rounded px-1.5 py-0.5 min-w-[24px] text-center">
+            {posicion}
+          </span>
+          <button
+            onClick={onBajarPrioridad}
+            disabled={!onBajarPrioridad}
+            className="text-ink-400 hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+            title="Bajar prioridad"
+          >
+            <ArrowDown size={11} />
+          </button>
+        </div>
+
         <button onClick={onToggle} className="flex items-center gap-2 flex-1 text-left">
           {abierta ? <ChevronUp size={14} className="text-ink-400" /> : <ChevronDown size={14} className="text-ink-400" />}
           <input

@@ -359,18 +359,65 @@ export default function NuevaConciliacionPage() {
   function descargar() {
     if (!resultado || !papel) return
     const cont = contrapartes.find((c) => c.id === contraparteId)
+    const cuenta = cuentasProveedor.find(c => c.id === cuentaProveedorId)
+
+    // Mapear sugerencias agrupadas aceptadas
+    const movsPorIdUnico = new Map(resultado.movimientos.map(m => [m.id_unico, m]))
+    const matchesAgrupadosExport = (resultado.sugerencias_agrupadas ?? [])
+      .filter(s => sugerenciasAceptadas.has(s.id_unico))
+      .map(s => {
+        const movsN = s.movs_lado_n.map(id => movsPorIdUnico.get(id)).filter(Boolean) as typeof resultado.movimientos
+        const movUno = movsPorIdUnico.get(s.mov_lado_1)
+        return {
+          tipo: s.tipo,
+          total_lado_n_ars: s.total_lado_n_ars,
+          importe_lado_1_ars: s.importe_lado_1_ars,
+          diferencia_ars: s.diferencia_ars,
+          score_confianza: s.score_confianza,
+          movs_lado_n_detalle: movsN.map(m => ({
+            fecha: m.fecha ? m.fecha.toISOString().slice(0, 10) : "",
+            tipo: m.tipo_original,
+            comprobante: m.comprobante_raw,
+            importe: m.importe_ars,
+          })),
+          mov_lado_1_detalle: movUno ? {
+            fecha: movUno.fecha ? movUno.fecha.toISOString().slice(0, 10) : "",
+            tipo: movUno.tipo_original,
+            comprobante: movUno.comprobante_raw,
+            importe: movUno.importe_ars,
+          } : undefined,
+        }
+      })
+
     const buf = exportarResultadoExcel(resultado, {
       papel,
       contraparte: cont?.nombre ?? "",
       periodoLabel,
       firmadoPor,
       aprobadoPor,
+      // Nuevos campos
+      sociedad: cuenta?.sociedad_nombre,
+      cuentaInterna: cuenta?.cuenta_interna,
+      cuit: cont?.cuit ?? undefined,
+      fechaCreacion: new Date().toISOString().slice(0, 10),
+      estado: "Borrador",
+      matchesAgrupados: matchesAgrupadosExport.length > 0 ? matchesAgrupadosExport : undefined,
     })
     const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
+    const nombreArchivo = [
+      "conciliacion",
+      cont?.nombre,
+      cuenta?.sociedad_nombre,
+      cuenta?.cuenta_interna,
+      periodoLabel || new Date().toISOString().slice(0, 10),
+    ].filter(Boolean).join("_")
+      .toLowerCase()
+      .replace(/\s+/g, "_")
+      .replace(/[^a-z0-9_.-]/g, "")
     a.href = url
-    a.download = `conciliacion_${cont?.nombre ?? "proveedor"}_${periodoLabel || new Date().toISOString().slice(0, 10)}.xlsx`
+    a.download = `${nombreArchivo}.xlsx`
     a.click()
     URL.revokeObjectURL(url)
   }

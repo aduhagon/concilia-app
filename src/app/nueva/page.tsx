@@ -117,20 +117,37 @@ export default function NuevaConciliacionPage() {
       }
     })
     // Cargar la última conciliación de este proveedor
-    supabase
-      .from("conciliaciones")
-      .select("periodo_label, saldo_final_compania_ars, saldo_final_compania_usd, saldo_final_contraparte_ars, saldo_final_contraparte_usd, tc_cierre")
-      .eq("contraparte_id", contraparteId)
-      .eq("estado", "finalizada")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => {
-        setUltimaConc(data as UltimaConc | null)
-      })
-  }, [contraparteId])
+    cargarUltimaConciliacionVigente()
+  }, [contraparteId, cuentaProveedorId, periodoLabel])
 
-  // Botón "Copiar de mes anterior": usa los saldos finales del mes anterior como saldos iniciales del mes nuevo
+  async function cargarUltimaConciliacionVigente() {
+    if (!contraparteId) {
+      setUltimaConc(null)
+      return
+    }
+    // Usar la función SQL que filtra por proveedor + cuenta + período de referencia
+    const { data } = await supabase.rpc("obtener_ultima_conciliacion_vigente", {
+      p_contraparte_id: contraparteId,
+      p_cuenta_proveedor_id: cuentaProveedorId || null,
+      p_periodo_referencia: periodoLabel || null,
+    })
+    const fila = Array.isArray(data) && data.length > 0 ? data[0] : null
+    setUltimaConc(fila as UltimaConc | null)
+
+    // Autocompletar saldos iniciales si están vacíos
+    if (fila && saldos.inicial_compania_ars === 0 && saldos.inicial_contraparte_ars === 0) {
+      setSaldos({
+        ...saldos,
+        inicial_compania_ars: Number(fila.saldo_final_compania_ars ?? 0),
+        inicial_compania_usd: Number(fila.saldo_final_compania_usd ?? 0),
+        inicial_contraparte_ars: Number(fila.saldo_final_contraparte_ars ?? 0),
+        inicial_contraparte_usd: Number(fila.saldo_final_contraparte_usd ?? 0),
+        tc_cierre: Number(fila.tc_cierre ?? saldos.tc_cierre),
+      })
+    }
+  }
+
+  // Re-aplicar saldos de la última conciliación aprobada (por si el operativo modificó algo y quiere volver al automático)
   function copiarDeAnterior() {
     if (!ultimaConc) return
     setSaldos({
@@ -538,13 +555,28 @@ export default function NuevaConciliacionPage() {
             <PasoNum num="2" />
             <h2 className="h-section">Período y saldos</h2>
           </div>
+
+          {/* Aviso de saldo autocompletado */}
+          {ultimaConc && (
+            <div className="card bg-ok-light/40 border-ok/30 flex items-start gap-2">
+              <CheckCircle2 size={14} className="text-ok flex-shrink-0 mt-0.5" />
+              <div className="text-xs text-ink-700 flex-1">
+                <strong>Saldo inicial autocompletado</strong>
+                {ultimaConc.periodo_label && (
+                  <> desde la conciliación aprobada de <strong>{ultimaConc.periodo_label}</strong></>
+                )}.{" "}
+                Si lo necesitás, podés editarlo manualmente — los cambios quedan registrados.
+              </div>
+            </div>
+          )}
+
           <EditorSaldos
             saldos={saldos}
             onChange={setSaldos}
             periodoLabel={periodoLabel}
             onPeriodoChange={setPeriodoLabel}
             onCopiarAnterior={ultimaConc ? copiarDeAnterior : undefined}
-            copiarAnteriorLabel={ultimaConc?.periodo_label ? `Copiar saldos del ${ultimaConc.periodo_label}` : "Copiar de mes anterior"}
+            copiarAnteriorLabel={ultimaConc?.periodo_label ? `Restaurar saldos de ${ultimaConc.periodo_label}` : "Copiar de mes anterior"}
           />
         </section>
       )}

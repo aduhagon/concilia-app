@@ -279,7 +279,10 @@ export default function DetalleConciliacionPage() {
       }
 
       texto(`N° ${c.id.substring(0,8).toUpperCase()}`, colDerecha, 12, 8, false, [200,215,235], "right")
-      texto(new Date(c.created_at).toLocaleDateString("es-AR"), colDerecha, 19, 8, false, [180,200,225], "right")
+      const mesAnio = c.periodo_label
+        ? c.periodo_label
+        : new Date(c.created_at).toLocaleString("es-AR", { month: "long", year: "numeric" })
+      texto(mesAnio.toUpperCase(), colDerecha, 19, 8, false, [180,200,225], "right")
 
       y = 40
 
@@ -296,6 +299,7 @@ export default function DetalleConciliacionPage() {
       const subInfo: string[] = []
       if (sociedad) subInfo.push(`Sociedad: ${sociedad}`)
       if (cuentaInterna) subInfo.push(`Cuenta: ${cuentaInterna}`)
+      if (!sociedad && !cuentaInterna) subInfo.push("Sin sociedad/cuenta asignada")
       if (c.periodo_label) subInfo.push(`Período: ${c.periodo_label}`)
       texto(subInfo.join("   ·   "), margin + 4, y + 13, 7.5, false, gris)
 

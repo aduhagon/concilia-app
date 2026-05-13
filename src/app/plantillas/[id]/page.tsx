@@ -71,15 +71,38 @@ export default function EditarPlantillaPage() {
   }, [contraparteId])
 
   async function cargarHistorial() {
-    if (!plantilla?.id) return
     setCargandoHist(true)
+
+    // Obtener plantilla_id de forma robusta
+    let plantillaId = plantilla?.id
+    if (!plantillaId) {
+      const { data: p } = await supabase
+        .from("plantillas_proveedor")
+        .select("id")
+        .eq("contraparte_id", contraparteId)
+        .maybeSingle()
+      plantillaId = p?.id
+    }
+
+    if (!plantillaId) {
+      setHistorial([])
+      setCargandoHist(false)
+      return
+    }
+
     const { data, error } = await supabase
       .from("plantillas_historial")
       .select("id, accion, campo_modificado, created_at, usuario_id")
-      .eq("plantilla_id", plantilla.id)
+      .eq("plantilla_id", plantillaId)
       .order("created_at", { ascending: false })
       .limit(50)
-    if (!error) setHistorial(data ?? [])
+
+    if (error) {
+      console.error("Error cargando historial:", error)
+      setHistorial([])
+    } else {
+      setHistorial(data ?? [])
+    }
     setCargandoHist(false)
   }
 

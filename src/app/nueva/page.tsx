@@ -398,7 +398,6 @@ export default function NuevaConciliacionPage() {
       // Nuevos campos
       sociedad: cuenta?.sociedad_nombre,
       cuentaInterna: cuenta?.cuenta_interna,
-      cuit: cont?.cuit ?? undefined,
       fechaCreacion: new Date().toISOString().slice(0, 10),
       estado: "Borrador",
       matchesAgrupados: matchesAgrupadosExport.length > 0 ? matchesAgrupadosExport : undefined,

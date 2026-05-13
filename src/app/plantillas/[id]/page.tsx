@@ -44,7 +44,7 @@ export default function EditarPlantillaPage() {
     accion: string
     campo_modificado: string | null
     created_at: string
-    usuarios: { nombre: string } | null
+    nombre_usuario: string | null
   }[]>([])
   const [cargandoHist, setCargandoHist] = useState(false)
 
@@ -85,7 +85,13 @@ export default function EditarPlantillaPage() {
       .eq("plantilla_id", p.id)
       .order("created_at", { ascending: false })
       .limit(50)
-    setHistorial((data ?? []) as any)
+    setHistorial((data ?? []).map((h: any) => ({
+      id: h.id,
+      accion: h.accion,
+      campo_modificado: h.campo_modificado,
+      created_at: h.created_at,
+      nombre_usuario: h.usuarios?.nombre ?? null,
+    })))
     setCargandoHist(false)
   }
 

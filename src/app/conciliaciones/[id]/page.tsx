@@ -357,18 +357,6 @@ export default function DetalleConciliacionPage() {
         y += 14
       }
 
-      // Líneas de firma
-      lineaH(y, grisClarito, 0.3)
-      y += 14
-      doc.setDrawColor(80,80,80)
-      doc.setLineWidth(0.3)
-      doc.line(col1, y, col1 + 52, y)
-      doc.line(col2, y, col2 + 52, y)
-      doc.line(col3, y, col3 + 52, y)
-      y += 4
-      texto("Conciliador responsable", col1, y, 6.5, false, gris)
-      texto("Supervisor / Aprobador", col2, y, 6.5, false, gris)
-      texto("Fecha", col3, y, 6.5, false, gris)
 
 
       // ── SALDOS ──

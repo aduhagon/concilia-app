@@ -9,27 +9,38 @@ import type {
 import { construirClave } from "./constructor-clave"
 
 // ============================================================
-// MOTOR DE CONCILIACIÓN v2
-// ------------------------------------------------------------
-// La lógica ya NO está hardcodeada en niveles fijos.
-// Se aplica la plantilla del proveedor:
-//   1. Para cada movimiento, identificamos a qué REGLA pertenece según su tipo.
-//   2. Si la regla es "clave": construimos la clave en cada lado y matcheamos.
-//   3. Si la regla es "importe_fecha": matcheamos por importe + ventana de fechas.
-//   4. Tipos en `tipos_sin_contraparte_*` quedan como "ajuste_propio".
-//   5. Tipos que no caen en ninguna regla → "tipo_no_clasificado".
+// MOTOR DE CONCILIACIÓN v2 — con log de decisiones
 // ============================================================
 
 type Lado = "compania" | "contraparte"
 
+// Log de cada decisión tomada por el motor
+export type DecisionMotor = {
+  mov_compania_id_unico: string
+  mov_contraparte_id_unico: string
+  nivel_match: number
+  criterio: string
+  score_confianza: number
+  clave_compania?: string
+  clave_contraparte?: string
+  candidatos_evaluados: number
+  candidatos_descartados?: { id: string; motivo: string }[]
+}
+
+export type ResultadoConciliacionConLog = ResultadoConciliacion & {
+  decisiones: DecisionMotor[]
+}
+
 export function conciliar(
   movimientos: MovimientoNorm[],
   plantilla: PlantillaProveedor
-): ResultadoConciliacion {
-  // 1. CLASIFICAR cada movimiento según las reglas de la plantilla
+): ResultadoConciliacionConLog {
+  const decisiones: DecisionMotor[] = []
+
+  // 1. CLASIFICAR
   const clasificados = movimientos.map((m) => clasificar(m, plantilla))
 
-  // 2. CONSTRUIR clave para los movimientos que matchean por clave
+  // 2. CONSTRUIR CLAVES
   for (const m of clasificados) {
     const regla = encontrarReglaPorId(plantilla, m.regla_id)
     if (!regla || regla.metodo_match !== "clave") continue
@@ -38,7 +49,7 @@ export function conciliar(
     m.clave_calculada = construirClave(m.raw, constructor)
   }
 
-  // 3. MATCHEAR por regla
+  // 3. INICIALIZAR RESULTADOS
   const resultados: MovimientoResultado[] = clasificados.map((m) => ({
     ...m,
     estado: m.tipo_normalizado === "AJUSTE_PROPIO"
@@ -49,6 +60,7 @@ export function conciliar(
     match_id: null,
   }))
 
+  // 4. MATCHEAR por regla
   for (const regla of plantilla.reglas_tipos) {
     const compania = resultados.filter(
       (r) => r.regla_id === regla.id && r.origen === "compania" && r.estado === "pendiente"
@@ -58,31 +70,24 @@ export function conciliar(
     )
 
     if (regla.metodo_match === "clave") {
-      matchPorClave(compania, contraparte, plantilla.config.tolerancia_importe, plantilla.config.moneda_separada)
+      matchPorClave(compania, contraparte, plantilla.config.tolerancia_importe, plantilla.config.moneda_separada, decisiones)
     } else if (regla.metodo_match === "importe_fecha") {
       const ventana = regla.ventana_dias ?? plantilla.config.ventana_dias_default
-      matchPorImporteFecha(compania, contraparte, ventana, plantilla.config.tolerancia_importe)
+      matchPorImporteFecha(compania, contraparte, ventana, plantilla.config.tolerancia_importe, decisiones)
     }
-    // "manual" no auto-matchea
   }
 
-  // 4. RESUMEN
   const resumen = construirResumen(resultados)
-
-  return { movimientos: resultados, resumen }
+  return { movimientos: resultados, resumen, decisiones }
 }
 
 // ----------------------------------------------------------------
-// Clasificación por tipo
+// Clasificación
 // ----------------------------------------------------------------
 
-function clasificar(
-  m: MovimientoNorm,
-  plantilla: PlantillaProveedor
-): MovimientoNorm {
+function clasificar(m: MovimientoNorm, plantilla: PlantillaProveedor): MovimientoNorm {
   const tipoUp = m.tipo_original.toUpperCase().trim()
 
-  // ¿Es un ajuste propio? (solo para movimientos del lado compañía)
   if (m.origen === "compania") {
     const sinContraparte = plantilla.tipos_sin_contraparte_compania.map((s) => s.toUpperCase())
     if (sinContraparte.some((t) => tipoUp.startsWith(t))) {
@@ -95,7 +100,6 @@ function clasificar(
     }
   }
 
-  // ¿Cae en alguna regla?
   for (const regla of plantilla.reglas_tipos) {
     const tiposPosibles = m.origen === "compania" ? regla.tipo_compania : regla.tipo_contraparte
     if (tiposPosibles.some((t) => tipoUp.startsWith(t.toUpperCase()))) {
@@ -112,14 +116,15 @@ function encontrarReglaPorId(p: PlantillaProveedor, id: string | null): ReglaTip
 }
 
 // ----------------------------------------------------------------
-// Match por clave construida
+// Match por clave — Nivel 1 (exacto) y Nivel 2 (clave + tolerancia)
 // ----------------------------------------------------------------
 
 function matchPorClave(
   compania: MovimientoResultado[],
   contraparte: MovimientoResultado[],
   tolerancia: number,
-  monedaSeparada: boolean
+  monedaSeparada: boolean,
+  decisiones: DecisionMotor[]
 ) {
   const indiceCont = new Map<string, MovimientoResultado[]>()
   for (const c of contraparte) {
@@ -131,11 +136,17 @@ function matchPorClave(
 
   for (const cmp of compania) {
     if (!cmp.clave_calculada) continue
-    const candidatos = indiceCont.get(cmp.clave_calculada)
-    if (!candidatos || candidatos.length === 0) continue
+    const candidatos = indiceCont.get(cmp.clave_calculada) ?? []
+    const descartados: { id: string; motivo: string }[] = []
 
-    // Tomamos el primer candidato disponible (no matcheado todavía)
-    const cont = candidatos.find((x) => x.match_id === null)
+    const cont = candidatos.find((x) => {
+      if (x.match_id !== null) {
+        descartados.push({ id: x.id_unico, motivo: "ya_matcheado" })
+        return false
+      }
+      return true
+    })
+
     if (!cont) continue
 
     cmp.match_id = cont.id_unico
@@ -148,39 +159,74 @@ function matchPorClave(
     cmp.diferencia_usd = dif_usd
     cont.diferencia_ars = dif_ars
     cont.diferencia_usd = dif_usd
+
+    // Nivel 1 = exacto (dif_ars y dif_usd = 0), Nivel 2 = clave con diferencia
+    const nivel = estado === "conciliado" ? 1 : 2
+    const score = estado === "conciliado" ? 100 :
+      estado === "conciliado_dif_ars" ? 85 : 60
+
+    decisiones.push({
+      mov_compania_id_unico: cmp.id_unico,
+      mov_contraparte_id_unico: cont.id_unico,
+      nivel_match: nivel,
+      criterio: "clave",
+      score_confianza: score,
+      clave_compania: cmp.clave_calculada ?? undefined,
+      clave_contraparte: cont.clave_calculada ?? undefined,
+      candidatos_evaluados: candidatos.length,
+      candidatos_descartados: descartados.length > 0 ? descartados : undefined,
+    })
   }
 }
 
 // ----------------------------------------------------------------
-// Match por importe + ventana de fechas (para Recibos / OP)
+// Match por importe + fecha — Nivel 3
 // ----------------------------------------------------------------
 
 function matchPorImporteFecha(
   compania: MovimientoResultado[],
   contraparte: MovimientoResultado[],
   ventanaDias: number,
-  tolerancia: number
+  tolerancia: number,
+  decisiones: DecisionMotor[]
 ) {
   const usados = new Set<string>()
 
   for (const cmp of compania) {
     let mejor: { c: MovimientoResultado; distancia: number } | null = null
+    const descartados: { id: string; motivo: string }[] = []
+    let evaluados = 0
 
     for (const cont of contraparte) {
-      if (cont.match_id !== null) continue
-      if (usados.has(cont.id_unico)) continue
+      if (cont.match_id !== null) {
+        descartados.push({ id: cont.id_unico, motivo: "ya_matcheado" })
+        continue
+      }
+      if (usados.has(cont.id_unico)) {
+        descartados.push({ id: cont.id_unico, motivo: "reservado" })
+        continue
+      }
 
-      // ¿Importe coincide? Comparamos en moneda original.
+      evaluados++
+
       const importeCmp = Math.abs(cmp.importe_ars) || Math.abs(cmp.importe_usd)
       const importeCont = Math.abs(cont.importe_ars) || Math.abs(cont.importe_usd)
-      if (Math.abs(importeCmp - importeCont) > tolerancia) continue
+      if (Math.abs(importeCmp - importeCont) > tolerancia) {
+        descartados.push({ id: cont.id_unico, motivo: `dif_importe:${Math.abs(importeCmp - importeCont).toFixed(2)}` })
+        continue
+      }
 
-      // ¿Fecha dentro de ventana?
-      if (!cmp.fecha || !cont.fecha) continue
+      if (!cmp.fecha || !cont.fecha) {
+        descartados.push({ id: cont.id_unico, motivo: "sin_fecha" })
+        continue
+      }
       const distancia = Math.abs(
         (cmp.fecha.getTime() - cont.fecha.getTime()) / (1000 * 60 * 60 * 24)
       )
-      if (distancia > ventanaDias) continue
+      if (distancia > ventanaDias) {
+        descartados.push({ id: cont.id_unico, motivo: `fuera_ventana:${distancia.toFixed(0)}d` })
+        continue
+      }
 
       if (!mejor || distancia < mejor.distancia) {
         mejor = { c: cont, distancia }
@@ -193,12 +239,22 @@ function matchPorImporteFecha(
       mejor.c.match_id = cmp.id_unico
       cmp.estado = "conciliado"
       mejor.c.estado = "conciliado"
+
+      decisiones.push({
+        mov_compania_id_unico: cmp.id_unico,
+        mov_contraparte_id_unico: mejor.c.id_unico,
+        nivel_match: 3,
+        criterio: "importe_fecha",
+        score_confianza: Math.max(50, 90 - mejor.distancia * 5),
+        candidatos_evaluados: evaluados,
+        candidatos_descartados: descartados.length > 0 ? descartados.slice(0, 10) : undefined,
+      })
     }
   }
 }
 
 // ----------------------------------------------------------------
-// Comparación de importes (clave del estado del match)
+// Comparación de importes
 // ----------------------------------------------------------------
 
 function compararImportes(
@@ -207,9 +263,6 @@ function compararImportes(
   tolerancia: number,
   monedaSeparada: boolean
 ): { estado: EstadoConciliacion; dif_ars: number; dif_usd: number } {
-  // Importes con signo: en compañía vienen como aparecen en el sistema.
-  // En contraparte el "importe" suele venir signado según lado.
-  // Para evaluar coincidencia trabajamos con valor absoluto del importe principal.
   const arsCmp = Math.abs(cmp.importe_ars)
   const arsCont = Math.abs(cont.importe_ars)
   const usdCmp = Math.abs(cmp.importe_usd)
@@ -221,16 +274,12 @@ function compararImportes(
   const arsOk = Math.abs(dif_ars) <= tolerancia
   const usdOk = usdCmp > 0 && usdCont > 0 && Math.abs(dif_usd) <= 0.01
 
-  // Si la moneda original es USD y los USD coinciden:
-  //   - si los ARS coinciden tambien: conciliado perfecto
-  //   - si los ARS no coinciden: diferencia de cambio (esperable)
   if (cmp.moneda === "USD" || cont.moneda === "USD") {
     if (usdOk && arsOk) return { estado: "conciliado", dif_ars, dif_usd }
     if (usdOk) return { estado: "conciliado_dif_ars", dif_ars, dif_usd }
     return { estado: "conciliado_dif_real", dif_ars, dif_usd }
   }
 
-  // Moneda ARS: directamente comparamos pesos
   if (arsOk) return { estado: "conciliado", dif_ars, dif_usd }
   return { estado: "conciliado_dif_real", dif_ars, dif_usd }
 }
@@ -271,7 +320,7 @@ function construirResumen(movs: MovimientoResultado[]): ResultadoConciliacion["r
 }
 
 // ----------------------------------------------------------------
-// Helpers para asignar IDs únicos a los movimientos antes de matchear
+// Helpers
 // ----------------------------------------------------------------
 
 export function asignarIds<T extends { id_unico?: string }>(items: T[]): (T & { id_unico: string })[] {

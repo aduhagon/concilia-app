@@ -4,8 +4,8 @@ export const dynamic = "force-dynamic"
 
 import { useEffect, useState, useMemo } from "react"
 import { supabase } from "@/lib/supabase-client"
-import { leerExcel, normalizarCompania, normalizarContraparte, exportarResultadoExcel } from "@/lib/excel-parser"
-import { conciliar } from "@/lib/motor-conciliacion"
+import { leerExcel, normalizarCompania, normalizarContraparte, exportarResultadoExcel, obtenerInfoArchivo } from "@/lib/excel-parser"
+import { conciliar, type ResultadoConciliacionConLog } from "@/lib/motor-conciliacion"
 import { armarPapelConciliacion } from "@/lib/papel-conciliacion"
 import type {
   PlantillaProveedor, ResultadoConciliacion,
@@ -48,7 +48,7 @@ export default function NuevaConciliacionPage() {
   const [plantilla, setPlantilla] = useState<PlantillaProveedor | null>(null)
   const [archivoCmp, setArchivoCmp] = useState<File | null>(null)
   const [archivoCont, setArchivoCont] = useState<File | null>(null)
-  const [resultado, setResultado] = useState<ResultadoConciliacion | null>(null)
+  const [resultado, setResultado] = useState<ResultadoConciliacionConLog | null>(null)
   const [procesando, setProcesando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -153,6 +153,9 @@ export default function NuevaConciliacionPage() {
     try {
       const cmpRaw = await leerExcel(archivoCmp)
       const contRaw = await leerExcel(archivoCont)
+      // Guardar cantidad de filas para el hash posterior
+      ;(window as any).__cmpRawFilas = cmpRaw.filas.length
+      ;(window as any).__contRawFilas = contRaw.filas.length
       const movsCmp = normalizarCompania(cmpRaw.filas, plantilla.mapeo_compania, "c")
       const movsCont = normalizarContraparte(contRaw.filas, plantilla.mapeo_contraparte, "x")
       const r = conciliar([...movsCmp, ...movsCont], plantilla)
@@ -168,6 +171,8 @@ export default function NuevaConciliacionPage() {
   async function guardar() {
     if (!resultado || !papel) return
     const cont = contrapartes.find((c) => c.id === contraparteId)
+    const cmpRawFilas: number = (window as any).__cmpRawFilas ?? 0
+    const contRawFilas: number = (window as any).__contRawFilas ?? 0
 
     // 1. Insertar la cabecera de la conciliación
     const { data: nueva, error: errSave } = await supabase
@@ -232,6 +237,38 @@ export default function NuevaConciliacionPage() {
         toast.show(`Guardado parcial: falló el detalle (${errMovs.message})`, "error")
         return
       }
+    }
+
+    // 3. Guardar hash de archivos fuente (trazabilidad / cadena de custodia)
+    if (archivoCmp && archivoCont) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        const [infoCmp, infoCont] = await Promise.all([
+          obtenerInfoArchivo(archivoCmp, cmpRawFilas),
+          obtenerInfoArchivo(archivoCont, contRawFilas),
+        ])
+        await supabase.from("archivos_fuente").insert([
+          { conciliacion_id: nueva.id, usuario_id: user?.id, origen: "compania", ...infoCmp, filas_procesadas: pendientes.filter(m => m.origen === "compania").length },
+          { conciliacion_id: nueva.id, usuario_id: user?.id, origen: "contraparte", ...infoCont, filas_procesadas: pendientes.filter(m => m.origen === "contraparte").length },
+        ])
+      } catch { /* no bloquear si falla el hash */ }
+    }
+
+    // 4. Guardar log de decisiones del motor
+    if (resultado.decisiones && resultado.decisiones.length > 0) {
+      try {
+        const decisionesDb = resultado.decisiones.slice(0, 500).map(d => ({
+          conciliacion_id: nueva.id,
+          nivel_match: d.nivel_match,
+          criterio: d.criterio,
+          score_confianza: d.score_confianza,
+          clave_compania: d.clave_compania ?? null,
+          clave_contraparte: d.clave_contraparte ?? null,
+          candidatos_evaluados: d.candidatos_evaluados,
+          candidatos_descartados: d.candidatos_descartados ?? null,
+        }))
+        await supabase.from("motor_decisiones").insert(decisionesDb)
+      } catch { /* no bloquear si falla el log */ }
     }
 
     toast.show(`✓ Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""}) — ${pendientes.length} pendientes`, "ok")

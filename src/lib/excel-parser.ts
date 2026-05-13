@@ -10,9 +10,6 @@ import type {
 
 // ============================================================
 // PARSER de Excel
-// ------------------------------------------------------------
-// Lee el archivo, devuelve filas + columnas detectadas para que
-// el usuario pueda armar el mapeo en la UI.
 // ============================================================
 
 export type ArchivoLeido = {
@@ -32,7 +29,34 @@ export async function leerExcel(file: File): Promise<ArchivoLeido> {
 }
 
 // ============================================================
+// HASH SHA-256 del archivo — cadena de custodia
+// ============================================================
+
+export async function calcularHashArchivo(file: File): Promise<string> {
+  const buf = await file.arrayBuffer()
+  const hashBuf = await crypto.subtle.digest("SHA-256", buf)
+  const hashArr = Array.from(new Uint8Array(hashBuf))
+  return hashArr.map(b => b.toString(16).padStart(2, "0")).join("")
+}
+
+export type ArchivoFuenteInfo = {
+  nombre_original: string
+  hash_sha256: string
+  filas_detectadas: number
+}
+
+export async function obtenerInfoArchivo(file: File, filas: number): Promise<ArchivoFuenteInfo> {
+  const hash = await calcularHashArchivo(file)
+  return {
+    nombre_original: file.name,
+    hash_sha256: hash,
+    filas_detectadas: filas,
+  }
+}
+
+// ============================================================
 // NORMALIZACIÓN: aplica el mapeo de la plantilla
+// Agrega fila_origen para trazabilidad hasta el Excel original
 // ============================================================
 
 export function normalizarCompania(
@@ -67,6 +91,7 @@ export function normalizarCompania(
       importe_usd: importeUsd,
       moneda,
       descripcion: mapeo.descripcion ? String(f[mapeo.descripcion] ?? "") : "",
+      fila_origen: idx + 2, // +2 porque fila 1 es encabezado, base 1
       raw: f,
     }
   })
@@ -99,6 +124,7 @@ export function normalizarContraparte(
       importe_usd: moneda === "USD" ? importe : 0,
       moneda: moneda ?? "ARS",
       descripcion: mapeo.descripcion ? String(f[mapeo.descripcion] ?? "") : "",
+      fila_origen: idx + 2,
       raw: f,
     }
   })
@@ -120,7 +146,6 @@ function parsearFecha(v: unknown): Date | null {
   if (!v) return null
   if (v instanceof Date) return v
   if (typeof v === "number") {
-    // Serial Excel: días desde 1900-01-01 (con bug del año 1900)
     const epoch = new Date(Date.UTC(1899, 11, 30))
     return new Date(epoch.getTime() + v * 86400000)
   }
@@ -146,12 +171,10 @@ export function exportarResultadoExcel(
 ): ArrayBuffer {
   const wb = XLSX.utils.book_new()
 
-  // Solapa 1 — Presentación (estilo papel formal)
   if (opciones?.papel) {
     agregarHojaPresentacion(wb, opciones)
   }
 
-  // Solapa 2 — Resumen ejecutivo
   const resumenRows = [
     { Concepto: "Movimientos compañía", Valor: resultado.resumen.total_compania },
     { Concepto: "Movimientos contraparte", Valor: resultado.resumen.total_contraparte },
@@ -164,36 +187,24 @@ export function exportarResultadoExcel(
   ]
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumenRows), "Resumen")
 
-  // Solapas — por estado
   agregarSolapa(wb, resultado.movimientos.filter((m) => m.estado === "conciliado"), "Conciliados")
   agregarSolapa(wb, resultado.movimientos.filter((m) => m.estado === "conciliado_dif_ars"), "Dif Cambio")
   agregarSolapa(wb, resultado.movimientos.filter((m) => m.estado === "conciliado_dif_real"), "Dif Real")
-  agregarSolapa(
-    wb,
-    resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "compania"),
-    "Pend Compañía"
-  )
-  agregarSolapa(
-    wb,
-    resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "contraparte"),
-    "Pend Contraparte"
-  )
+  agregarSolapa(wb, resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "compania"), "Pend Compañía")
+  agregarSolapa(wb, resultado.movimientos.filter((m) => m.estado === "pendiente" && m.origen === "contraparte"), "Pend Contraparte")
   agregarSolapa(wb, resultado.movimientos.filter((m) => m.estado === "ajuste_propio"), "Ajustes Propios")
   agregarSolapa(wb, resultado.movimientos.filter((m) => m.estado === "tipo_no_clasificado"), "Sin Clasificar")
 
   return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer
 }
 
-// ----- Hoja "Presentación" estilo papel formal -----
 function agregarHojaPresentacion(wb: XLSX.WorkBook, op: OpcionesExport) {
   const p = op.papel
   const s = p.saldos
   const c = p.composicion
   const today = new Date().toISOString().slice(0, 10)
 
-  // Generamos como matriz de filas (cada fila es un array de celdas)
   const rows: (string | number)[][] = []
-
   rows.push(["Reporte de Conciliación"])
   rows.push([])
   rows.push(["Cuenta:", op.contraparte])
@@ -209,24 +220,18 @@ function agregarHojaPresentacion(wb: XLSX.WorkBook, op: OpcionesExport) {
   rows.push(["Detalle de Diferencia"])
   rows.push(["Categoría", "USD", "ARS", "Cantidad"])
 
-  rows.push(["Comprobantes contabilizados con fecha posterior por MSU", c.posterior_msu.total_usd, c.posterior_msu.total_ars, c.posterior_msu.movimientos.length])
-  for (const m of c.posterior_msu.movimientos) {
-    rows.push([`    ${m.fecha?.toISOString().slice(0, 10) ?? ""} ${m.tipo_original} ${m.comprobante_raw}`, m.importe_usd, m.importe_ars, ""])
-  }
+  const categorias = [
+    { label: "Comprobantes contabilizados con fecha posterior por MSU", data: c.posterior_msu },
+    { label: "Comprobantes pendientes de contabilizar por MSU", data: c.pendiente_msu },
+    { label: "Comprobantes contabilizados por contraparte con fecha posterior", data: c.posterior_contraparte },
+    { label: "Comprobantes no contabilizados por contraparte", data: c.no_contraparte },
+  ]
 
-  rows.push(["Comprobantes pendientes de contabilizar por MSU", c.pendiente_msu.total_usd, c.pendiente_msu.total_ars, c.pendiente_msu.movimientos.length])
-  for (const m of c.pendiente_msu.movimientos) {
-    rows.push([`    ${m.fecha?.toISOString().slice(0, 10) ?? ""} ${m.tipo_original} ${m.comprobante_raw}`, m.importe_usd, m.importe_ars, ""])
-  }
-
-  rows.push(["Comprobantes contabilizados por contraparte con fecha posterior", c.posterior_contraparte.total_usd, c.posterior_contraparte.total_ars, c.posterior_contraparte.movimientos.length])
-  for (const m of c.posterior_contraparte.movimientos) {
-    rows.push([`    ${m.fecha?.toISOString().slice(0, 10) ?? ""} ${m.tipo_original} ${m.comprobante_raw}`, m.importe_usd, m.importe_ars, ""])
-  }
-
-  rows.push(["Comprobantes no contabilizados por contraparte", c.no_contraparte.total_usd, c.no_contraparte.total_ars, c.no_contraparte.movimientos.length])
-  for (const m of c.no_contraparte.movimientos) {
-    rows.push([`    ${m.fecha?.toISOString().slice(0, 10) ?? ""} ${m.tipo_original} ${m.comprobante_raw}`, m.importe_usd, m.importe_ars, ""])
+  for (const cat of categorias) {
+    rows.push([cat.label, cat.data.total_usd, cat.data.total_ars, cat.data.movimientos.length])
+    for (const m of cat.data.movimientos) {
+      rows.push([`    ${m.fecha?.toISOString().slice(0, 10) ?? ""} ${m.tipo_original} ${m.comprobante_raw}`, m.importe_usd, m.importe_ars, ""])
+    }
   }
 
   rows.push(["Ajustes a realizar por MSU", c.ajustes.total_usd, c.ajustes.total_ars, c.ajustes.ajustes.length])
@@ -242,13 +247,7 @@ function agregarHojaPresentacion(wb: XLSX.WorkBook, op: OpcionesExport) {
   rows.push(["Aprobado por:", op.aprobadoPor ?? "", "Fecha:", op.aprobadoPor ? today : ""])
 
   const ws = XLSX.utils.aoa_to_sheet(rows)
-  // Anchos básicos
-  ws["!cols"] = [
-    { wch: 70 },
-    { wch: 20 },
-    { wch: 22 },
-    { wch: 12 },
-  ]
+  ws["!cols"] = [{ wch: 70 }, { wch: 20 }, { wch: 22 }, { wch: 12 }]
   XLSX.utils.book_append_sheet(wb, ws, "Presentación")
 }
 
@@ -267,6 +266,7 @@ function agregarSolapa(wb: XLSX.WorkBook, movs: MovimientoResultado[], nombre: s
     "Dif ARS": m.diferencia_ars ?? "",
     "Dif USD": m.diferencia_usd ?? "",
     Descripción: m.descripcion,
+    "Fila Origen": (m as any).fila_origen ?? "",
   }))
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), nombre)
 }

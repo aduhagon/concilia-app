@@ -773,11 +773,35 @@ function DiffHistorial({ accion, campo, anterior, nuevo }: {
     const eliminadosExt = [...setAntExt].filter(x => !setNewExt.has(x))
 
     return (
-      <div className="text-2xs space-y-0.5 pl-2 border-l-2 border-ink-100">
-        {agregadosCmp.map(t => <div key={"a-c-"+t}><span className="text-ok">+ Compañía:</span> {t}</div>)}
-        {eliminadosCmp.map(t => <div key={"d-c-"+t}><span className="text-danger">− Compañía:</span> {t}</div>)}
-        {agregadosExt.map(t => <div key={"a-e-"+t}><span className="text-ok">+ Externa:</span> {t}</div>)}
-        {eliminadosExt.map(t => <div key={"d-e-"+t}><span className="text-danger">− Externa:</span> {t}</div>)}
+      <div className="text-2xs space-y-1 pl-2 border-l-2 border-ink-100">
+        {agregadosCmp.map(t => (
+          <div key={"a-c-"+t} className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 bg-ok-light text-ok font-semibold px-1.5 py-0.5 rounded">AGREGÓ</span>
+            <span className="text-ink-500">en Compañía:</span>
+            <span className="font-mono">{t}</span>
+          </div>
+        ))}
+        {eliminadosCmp.map(t => (
+          <div key={"d-c-"+t} className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 bg-danger-light text-danger font-semibold px-1.5 py-0.5 rounded">ELIMINÓ</span>
+            <span className="text-ink-500">de Compañía:</span>
+            <span className="font-mono">{t}</span>
+          </div>
+        ))}
+        {agregadosExt.map(t => (
+          <div key={"a-e-"+t} className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 bg-ok-light text-ok font-semibold px-1.5 py-0.5 rounded">AGREGÓ</span>
+            <span className="text-ink-500">en Externa:</span>
+            <span className="font-mono">{t}</span>
+          </div>
+        ))}
+        {eliminadosExt.map(t => (
+          <div key={"d-e-"+t} className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 bg-danger-light text-danger font-semibold px-1.5 py-0.5 rounded">ELIMINÓ</span>
+            <span className="text-ink-500">de Externa:</span>
+            <span className="font-mono">{t}</span>
+          </div>
+        ))}
       </div>
     )
   }
@@ -785,18 +809,18 @@ function DiffHistorial({ accion, campo, anterior, nuevo }: {
   // Regla agregada/eliminada
   if (accion === "regla_agregada" && nuevo) {
     return (
-      <div className="text-2xs pl-2 border-l-2 border-ok/30">
-        <span className="text-ok font-semibold">+ </span>
+      <div className="text-2xs pl-2 border-l-2 border-ok/30 flex items-center gap-1.5 flex-wrap">
+        <span className="inline-flex items-center gap-1 bg-ok-light text-ok font-semibold px-1.5 py-0.5 rounded">AGREGÓ REGLA</span>
         <span className="font-semibold">{nuevo.label ?? nuevo.id}</span>
-        {nuevo.tipo_compania?.length > 0 && <span className="text-ink-500"> · Comp: {nuevo.tipo_compania.join(", ")}</span>}
-        {nuevo.tipo_contraparte?.length > 0 && <span className="text-ink-500"> · Cont: {nuevo.tipo_contraparte.join(", ")}</span>}
+        {nuevo.tipo_compania?.length > 0 && <span className="text-ink-500">· Comp: {nuevo.tipo_compania.join(", ")}</span>}
+        {nuevo.tipo_contraparte?.length > 0 && <span className="text-ink-500">· Cont: {nuevo.tipo_contraparte.join(", ")}</span>}
       </div>
     )
   }
   if (accion === "regla_eliminada" && anterior) {
     return (
-      <div className="text-2xs pl-2 border-l-2 border-danger/30">
-        <span className="text-danger font-semibold">− </span>
+      <div className="text-2xs pl-2 border-l-2 border-danger/30 flex items-center gap-1.5 flex-wrap">
+        <span className="inline-flex items-center gap-1 bg-danger-light text-danger font-semibold px-1.5 py-0.5 rounded">ELIMINÓ REGLA</span>
         <span className="font-semibold">{anterior.label ?? anterior.id}</span>
       </div>
     )
@@ -814,12 +838,14 @@ function DiffHistorial({ accion, campo, anterior, nuevo }: {
       }
     }
     return (
-      <div className="text-2xs space-y-0.5 pl-2 border-l-2 border-ink-100">
+      <div className="text-2xs space-y-1 pl-2 border-l-2 border-ink-100">
         {cambios.map((c, i) => (
-          <div key={i}>
-            <span className="font-mono text-ink-500">{c.campo}:</span>{" "}
-            <span className="text-danger line-through">{c.antes}</span>{" → "}
-            <span className="text-ok">{c.despues}</span>
+          <div key={i} className="flex items-center gap-1.5 flex-wrap">
+            <span className="inline-flex items-center gap-1 bg-warn-light text-warn font-semibold px-1.5 py-0.5 rounded">CAMBIÓ</span>
+            <span className="font-mono text-ink-500">{c.campo}:</span>
+            <span className="text-danger line-through">{c.antes}</span>
+            <span className="text-ink-400">→</span>
+            <span className="text-ok font-semibold">{c.despues}</span>
           </div>
         ))}
       </div>

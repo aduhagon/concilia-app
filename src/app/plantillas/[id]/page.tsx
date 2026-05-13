@@ -14,7 +14,7 @@ import type {
   ReglaTipo,
   ConstructorClave,
 } from "@/types"
-import { ArrowLeft, Save, Upload, Plus, Trash2, ChevronDown, ChevronUp, FileWarning } from "lucide-react"
+import { ArrowLeft, Save, Upload, Plus, Trash2, ChevronDown, ChevronUp, FileWarning, History, Clock } from "lucide-react"
 import Link from "next/link"
 
 const MAPEO_VACIO_CMP: MapeoCompania = {
@@ -38,6 +38,15 @@ export default function EditarPlantillaPage() {
 
   const [guardando, setGuardando] = useState(false)
   const [reglaAbierta, setReglaAbierta] = useState<string | null>(null)
+  const [mostrarHistorial, setMostrarHistorial] = useState(false)
+  const [historial, setHistorial] = useState<{
+    id: string
+    accion: string
+    campo_modificado: string | null
+    created_at: string
+    usuarios: { nombre: string } | null
+  }[]>([])
+  const [cargandoHist, setCargandoHist] = useState(false)
 
   useEffect(() => {
     async function cargar() {
@@ -60,6 +69,19 @@ export default function EditarPlantillaPage() {
     }
     cargar()
   }, [contraparteId])
+
+  async function cargarHistorial() {
+    if (!plantilla) return
+    setCargandoHist(true)
+    const { data } = await supabase
+      .from("plantillas_historial")
+      .select("id, accion, campo_modificado, created_at, usuarios(nombre)")
+      .eq("plantilla_id", plantilla.id)
+      .order("created_at", { ascending: false })
+      .limit(50)
+    setHistorial((data ?? []) as any)
+    setCargandoHist(false)
+  }
 
   async function subirMuestra(file: File, lado: "compania" | "contraparte") {
     const r = await leerExcel(file)
@@ -220,9 +242,20 @@ export default function EditarPlantillaPage() {
           </Link>
           <h1 className="h-page mt-2">{contraparte.nombre}</h1>
         </div>
-        <button onClick={guardar} disabled={guardando} className="btn btn-primary">
-          <Save size={14} /> {guardando ? "Guardando..." : "Guardar plantilla"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setMostrarHistorial(v => !v)
+              if (!mostrarHistorial) cargarHistorial()
+            }}
+            className={`btn btn-secondary flex items-center gap-1.5 ${mostrarHistorial ? "bg-ink-100" : ""}`}
+          >
+            <History size={14} /> Historial
+          </button>
+          <button onClick={guardar} disabled={guardando} className="btn btn-primary">
+            <Save size={14} /> {guardando ? "Guardando..." : "Guardar plantilla"}
+          </button>
+        </div>
       </div>
 
       {/* Subir muestras */}

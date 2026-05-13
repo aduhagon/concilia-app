@@ -71,12 +71,18 @@ export default function EditarPlantillaPage() {
   }, [contraparteId])
 
   async function cargarHistorial() {
-    if (!plantilla) return
     setCargandoHist(true)
+    // Buscar el id de la plantilla via contraparteId
+    const { data: p } = await supabase
+      .from("plantillas_proveedor")
+      .select("id")
+      .eq("contraparte_id", contraparteId)
+      .single()
+    if (!p) { setCargandoHist(false); return }
     const { data } = await supabase
       .from("plantillas_historial")
       .select("id, accion, campo_modificado, created_at, usuarios(nombre)")
-      .eq("plantilla_id", plantilla.id)
+      .eq("plantilla_id", p.id)
       .order("created_at", { ascending: false })
       .limit(50)
     setHistorial((data ?? []) as any)

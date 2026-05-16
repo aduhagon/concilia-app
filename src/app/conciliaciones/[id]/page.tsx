@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
+import { registrar } from "@/lib/auditoria"
 import type { AjusteManual, MovimientoResultado, StatusPendiente } from "@/types"
 import { STATUS_LABELS } from "@/types"
 import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User, Lock, Unlock, ChevronDown, History, Printer, Shield, KeyRound } from "lucide-react"
@@ -277,6 +278,16 @@ export default function DetalleConciliacionPage() {
     }
 
     await supabase.from("conciliaciones").update(updates).eq("id", c.id)
+
+    // Auditoría general
+    await registrar(supabase, {
+      accion: "conciliacion_estado",
+      tabla_afectada: "conciliaciones",
+      registro_id: c.id,
+      valor_anterior: { estado: estadoAnterior },
+      valor_nuevo: { estado: accion },
+      observacion: observacion || undefined,
+    })
 
     // Registrar en historial
     await supabase.from("conciliacion_historial").insert({

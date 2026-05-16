@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic"
 
 import { useEffect, useState, useMemo } from "react"
 import { supabase } from "@/lib/supabase-client"
+import { registrar } from "@/lib/auditoria"
 import { leerExcel, normalizarCompania, normalizarContraparte, exportarResultadoExcel, obtenerInfoArchivo } from "@/lib/excel-parser"
 import { conciliar, type ResultadoConciliacionConLog } from "@/lib/motor-conciliacion"
 import { armarPapelConciliacion } from "@/lib/papel-conciliacion"
@@ -231,6 +232,14 @@ export default function NuevaConciliacionPage() {
       alert("Error al guardar: " + (errSave?.message ?? "desconocido"))
       return
     }
+
+    // Auditoría: nueva conciliación creada
+    await registrar(supabase, {
+      accion: "conciliacion_creada",
+      tabla_afectada: "conciliaciones",
+      registro_id: nueva.id,
+      valor_nuevo: { contraparte_id: nueva.contraparte_id, periodo_label: nueva.periodo_label },
+    })
 
     // 2. Guardar pendientes Y los movimientos que pertenecen a matches agrupados aceptados
     const pendientes = resultado.movimientos.filter((m) => m.estado === "pendiente")

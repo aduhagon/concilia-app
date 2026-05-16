@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic"
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase-client"
+import { registrar } from "@/lib/auditoria"
 import { leerExcel } from "@/lib/excel-parser"
 import EditorClave from "@/components/EditorClave"
 import type {
@@ -261,6 +262,14 @@ export default function EditarPlantillaPage() {
       }
 
       if (registros.length > 0) {
+
+      // Auditoría: plantilla modificada
+      await registrar(supabase, {
+        accion: "plantilla_modificada",
+        tabla_afectada: "plantillas_proveedor",
+        registro_id: plantilla.id,
+        observacion: `${registros.length} campo(s) modificado(s)`,
+      })
         await supabase.from("plantillas_historial").insert(registros)
       }
     }

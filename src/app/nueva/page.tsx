@@ -116,8 +116,13 @@ export default function NuevaConciliacionPage() {
         })
       }
     })
-    // Cargar la última conciliación de este proveedor
-    cargarUltimaConciliacionVigente()
+    // Cargar la última conciliación se hace en su propio useEffect
+  }, [contraparteId])
+
+  // useEffect separado para última conciliación (depende de cuenta + período)
+  useEffect(() => {
+    if (contraparteId) cargarUltimaConciliacionVigente()
+    else setUltimaConc(null)
   }, [contraparteId, cuentaProveedorId, periodoLabel])
 
   async function cargarUltimaConciliacionVigente() {

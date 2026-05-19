@@ -55,26 +55,76 @@ function ActivarContenido() {
     setError(null)
     if (password.length < 8) { setError("La contraseña debe tener al menos 8 caracteres"); return }
     if (password !== confirmar) { setError("Las contraseñas no coinciden"); return }
+    if (!invitacion) { setError("Invitación inválida."); return }
     setCargando(true)
     try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser()
-      if (userError || !user) {
-        setError("Sesión inválida. El link puede haber expirado.")
+      // 1. Cerrar cualquier sesión activa para evitar que signUp se confunda
+      await supabase.auth.signOut()
+
+      // 2. Obtener datos completos de la invitación (grupo_id y rol)
+      const { data: inv, error: invErr } = await supabase
+        .from("invitaciones")
+        .select("id, email, nombre, rol, grupo_id")
+        .eq("token", token!)
+        .eq("usado", false)
+        .single()
+
+      if (invErr || !inv) {
+        setError("El link de activación ya fue usado o expiró.")
         setCargando(false)
         return
       }
-      const { error: passError } = await supabase.auth.updateUser({ password })
-      if (passError) {
-        setError(passError.message)
+
+      // 3. Crear el usuario en Supabase Auth con signUp
+      const { data: authData, error: signUpError } = await supabase.auth.signUp({
+        email: inv.email,
+        password,
+        options: {
+          data: { nombre: inv.nombre },
+        },
+      })
+
+      if (signUpError || !authData.user) {
+        // Si el usuario ya existe en Auth (doble click, etc.) intentar login directo
+        if (signUpError?.message?.includes("already registered")) {
+          const { error: loginErr } = await supabase.auth.signInWithPassword({
+            email: inv.email,
+            password,
+          })
+          if (loginErr) {
+            setError("Este email ya tiene una cuenta. Intentá iniciar sesión normalmente.")
+            setCargando(false)
+            return
+          }
+        } else {
+          setError(signUpError?.message ?? "Error al crear la cuenta.")
+          setCargando(false)
+          return
+        }
+      }
+
+      const userId = authData.user?.id
+      if (!userId) {
+        setError("Error inesperado al obtener el ID de usuario.")
         setCargando(false)
         return
       }
-      await supabase.from("invitaciones").update({ usado: true }).eq("token", token!)
-      await supabase.from("usuarios").update({
-        primer_login: false,
+
+      // 4. Crear el registro en la tabla usuarios de la app
+      await supabase.from("usuarios").upsert({
+        id: userId,
+        nombre: inv.nombre,
+        email: inv.email,
+        rol: inv.rol,
+        grupo_id: inv.grupo_id,
         activo: true,
+        primer_login: false,
         updated_at: new Date().toISOString(),
-      }).eq("id", user.id)
+      }, { onConflict: "id" })
+
+      // 5. Marcar la invitación como usada
+      await supabase.from("invitaciones").update({ usado: true }).eq("token", token!)
+
       setEstado("done")
       setTimeout(() => { router.push("/"); router.refresh() }, 1200)
     } catch {

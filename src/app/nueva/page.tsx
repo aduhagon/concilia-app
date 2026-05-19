@@ -515,6 +515,12 @@ export default function NuevaConciliacionPage() {
   // Detectar si hay un borrador en progreso (cualquier campo crítico tiene valor)
   const hayBorrador = !!(periodoLabel || saldos.final_compania_ars !== 0 || saldos.tc_cierre !== 0 || ajustes.length > 0 || Object.keys(clasificacion).length > 0)
 
+  // Calcular paso activo para el stepper
+  const paso1Listo = !!(plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId)
+  const paso2Listo = paso1Listo && !!(periodoLabel)
+  const paso3Listo = paso2Listo && !!(archivoCmp && archivoCont)
+  const pasoActivo = !paso1Listo ? 1 : !paso2Listo ? 2 : !paso3Listo ? 3 : resultado ? 4 : 3
+
   return (
     <div className="px-6 py-6 space-y-6">
       <div className="flex items-end justify-between border-b border-ink-200 pb-4">
@@ -534,8 +540,11 @@ export default function NuevaConciliacionPage() {
         )}
       </div>
 
+      {/* Stepper horizontal */}
+      <StepperHorizontal pasoActivo={pasoActivo} paso1Listo={paso1Listo} paso2Listo={paso2Listo} paso3Listo={paso3Listo} hayResultado={!!resultado} />
+
       <section className="card">
-        <PasoTitulo num="1" titulo="Proveedor / plantilla" />
+        <PasoTitulo num="1" titulo="Proveedor y cuenta" completado={paso1Listo} />
         <select
           value={contraparteId}
           onChange={(e) => setContraparteId(e.target.value)}
@@ -582,11 +591,11 @@ export default function NuevaConciliacionPage() {
         )}
       </section>
 
-      {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && (
+      {paso1Listo && (
         <section>
           <div className="flex items-center gap-2 mb-2 px-1">
-            <PasoNum num="2" />
-            <h2 className="h-section">Período y saldos</h2>
+            <PasoNum num="2" completado={paso2Listo} />
+            <h2 className={`h-section ${paso2Listo ? "text-ink-900" : "text-ink-700"}`}>Período y saldos</h2>
           </div>
 
           {/* Aviso de saldo autocompletado */}
@@ -614,11 +623,11 @@ export default function NuevaConciliacionPage() {
         </section>
       )}
 
-      {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && (
+      {paso1Listo && paso2Listo && (
         <section className="space-y-2">
           <div className="flex items-center gap-2 mb-2 px-1">
-            <PasoNum num="3" />
-            <h2 className="h-section">Archivos del período</h2>
+            <PasoNum num="3" completado={paso3Listo} />
+            <h2 className={`h-section ${paso3Listo ? "text-ink-900" : "text-ink-700"}`}>Archivos del período</h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <ArchivoCard label="Archivo COMPAÑÍA" file={archivoCmp} onFile={setArchivoCmp} />
@@ -627,7 +636,7 @@ export default function NuevaConciliacionPage() {
         </section>
       )}
 
-      {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && (
+      {paso3Listo && (
         <div className="flex flex-col items-center gap-4 py-2">
           {etapa === "idle" || etapa === "listo" || etapa === "error" ? (
             <button
@@ -646,11 +655,7 @@ export default function NuevaConciliacionPage() {
           />
         </div>
       )}
-      {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && !archivoCmp && !archivoCont && !procesando && (
-        <div className="text-center text-2xs text-ink-500">
-          Subí los dos archivos (compañía y contraparte) para habilitar la conciliación
-        </div>
-      )}
+
 
       {error && (
         <div className="card border-red-200 bg-red-50">
@@ -795,18 +800,60 @@ export default function NuevaConciliacionPage() {
   )
 }
 
-function PasoTitulo({ num, titulo }: { num: string; titulo: string }) {
+
+function StepperHorizontal({ pasoActivo, paso1Listo, paso2Listo, paso3Listo, hayResultado }: {
+  pasoActivo: number
+  paso1Listo: boolean
+  paso2Listo: boolean
+  paso3Listo: boolean
+  hayResultado: boolean
+}) {
+  const pasos = [
+    { num: 1, label: "Proveedor", listo: paso1Listo },
+    { num: 2, label: "Período", listo: paso2Listo },
+    { num: 3, label: "Archivos", listo: paso3Listo },
+    { num: 4, label: "Resultado", listo: hayResultado },
+  ]
   return (
-    <div className="flex items-center gap-2 mb-2">
-      <PasoNum num={num} />
-      <span className="text-2xs uppercase tracking-wider text-ink-500">{titulo}</span>
+    <div className="flex items-center gap-0 mb-2">
+      {pasos.map((p, i) => (
+        <div key={p.num} className="flex items-center flex-1 last:flex-none">
+          <div className="flex flex-col items-center gap-1">
+            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium transition-colors ${
+              p.listo        ? "bg-ok text-white" :
+              pasoActivo === p.num ? "bg-accent text-white" :
+              "bg-ink-100 text-ink-400"
+            }`}>
+              {p.listo ? <CheckCircle2 size={14} /> : p.num}
+            </div>
+            <span className={`text-2xs whitespace-nowrap ${
+              p.listo ? "text-ok" :
+              pasoActivo === p.num ? "text-accent font-medium" :
+              "text-ink-400"
+            }`}>{p.label}</span>
+          </div>
+          {i < pasos.length - 1 && (
+            <div className={`h-0.5 flex-1 mx-2 mb-4 rounded transition-colors ${p.listo ? "bg-ok" : "bg-ink-200"}`} />
+          )}
+        </div>
+      ))}
     </div>
   )
 }
 
-function PasoNum({ num }: { num: string }) {
+function PasoTitulo({ num, titulo, completado = false }: { num: string; titulo: string; completado?: boolean }) {
   return (
-    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-accent text-white text-2xs font-medium">
+    <div className="flex items-center gap-2 mb-3">
+      <PasoNum num={num} completado={completado} />
+      <span className={`text-xs font-medium ${completado ? "text-ok" : "text-ink-700"}`}>{titulo}</span>
+      {completado && <CheckCircle2 size={13} className="text-ok" />}
+    </div>
+  )
+}
+
+function PasoNum({ num, completado = false }: { num: string; completado?: boolean }) {
+  return (
+    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white text-2xs font-medium ${completado ? "bg-ok" : "bg-accent"}`}>
       {num}
     </span>
   )

@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { formatNumCompact, formatNum, antiguedad } from "@/lib/format"
 import CategoriaBadge from "@/components/CategoriaBadge"
+import { calcularEstado, tieneAlertaSemanal, compararUrgencia } from "@/lib/estado-cuenta"
 
 type Rol = "admin" | "supervisor" | "operativo" | null
 
@@ -33,19 +34,6 @@ type CuentaOperativo = {
   total_conciliaciones: number
   estado: "conciliada" | "pendiente" | "vencida" | "sin_iniciar"
   alerta_semanal: boolean
-}
-
-function calcularEstado(prox: string | null, ultimaConc: string | null, categoria: string | null): CuentaOperativo["estado"] {
-  if (!ultimaConc) return "sin_iniciar"
-  const hoy = new Date()
-  const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
-  const ultimaFecha = new Date(ultimaConc)
-  if (ultimaFecha >= inicioMes) return "conciliada"
-  if (prox) {
-    return new Date(prox) < hoy ? "vencida" : "pendiente"
-  }
-  if (categoria === "E" || categoria === "F") return "pendiente"
-  return "vencida"
 }
 
 export default function HomePage() {
@@ -112,9 +100,8 @@ export default function HomePage() {
         .select("id", { count: "exact", head: true })
         .eq("contraparte_id", c.id)
 
-      const estado = calcularEstado(c.prox_conciliacion, ultima?.created_at ?? null, c.categoria)
-      const alertaSemanal = c.categoria === "A" && c.prox_alerta
-        ? new Date(c.prox_alerta) <= hoy : false
+      const estado = calcularEstado({ ultima_conciliacion: ultima?.created_at ?? null, prox_conciliacion: c.prox_conciliacion, categoria: c.categoria })
+      const alertaSemanal = tieneAlertaSemanal(c.categoria, c.prox_alerta)
 
       items.push({
         id: c.id,
@@ -131,12 +118,7 @@ export default function HomePage() {
       })
     }
 
-    const orden = { vencida: 0, pendiente: 2, sin_iniciar: 3, conciliada: 4 }
-    items.sort((a, b) => {
-      const oa = a.alerta_semanal && a.estado !== "vencida" ? 1 : orden[a.estado]
-      const ob = b.alerta_semanal && b.estado !== "vencida" ? 1 : orden[b.estado]
-      return oa - ob
-    })
+    items.sort(compararUrgencia)
 
     setCuentas(items)
   }
@@ -160,7 +142,7 @@ export default function HomePage() {
         .limit(1)
         .maybeSingle()
 
-      const estado = calcularEstado(c.prox_conciliacion, ultima?.created_at ?? null, c.categoria)
+      const estado = calcularEstado({ ultima_conciliacion: ultima?.created_at ?? null, prox_conciliacion: c.prox_conciliacion, categoria: c.categoria })
       if (estado === "conciliada") conciliadas++
       else if (estado === "vencida") vencidas++
       else pendientes++

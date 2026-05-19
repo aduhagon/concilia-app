@@ -10,6 +10,7 @@ import {
   Building2, Search, Download, Bell
 } from "lucide-react"
 import CategoriaBadge, { CAT_FREQ } from "@/components/CategoriaBadge"
+import { calcularEstado, tieneAlertaSemanal, compararUrgencia } from "@/lib/estado-cuenta"
 
 type CuentaEstado = {
   id: string
@@ -35,31 +36,6 @@ const ESTADO_CONFIG = {
   pendiente: { label: "Pendiente", color: "bg-warn-light text-warn", dot: "bg-warn" },
   vencida: { label: "Vencida", color: "bg-danger-light text-danger", dot: "bg-danger" },
   sin_iniciar: { label: "Sin iniciar", color: "bg-ink-100 text-ink-500", dot: "bg-ink-300" },
-}
-
-function calcularEstado(cuenta: {
-  ultima_conciliacion: string | null
-  prox_conciliacion: string | null
-  categoria: string | null
-}): CuentaEstado["estado"] {
-  const hoy = new Date()
-  const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
-
-  if (!cuenta.ultima_conciliacion) return "sin_iniciar"
-
-  const ultimaFecha = new Date(cuenta.ultima_conciliacion)
-
-  if (ultimaFecha >= inicioMes) return "conciliada"
-
-  if (cuenta.prox_conciliacion) {
-    const proxFecha = new Date(cuenta.prox_conciliacion)
-    if (proxFecha < hoy) return "vencida"
-    return "pendiente"
-  }
-
-  if (cuenta.categoria === "E" || cuenta.categoria === "F") return "pendiente"
-
-  return "vencida"
 }
 
 function formatFecha(iso: string | null): string {
@@ -114,9 +90,7 @@ export default function SupervisorPage() {
           categoria: c.categoria,
         })
 
-        const alertaSemanal = c.categoria === "A" && c.prox_alerta
-          ? new Date(c.prox_alerta) <= new Date()
-          : false
+        const alertaSemanal = tieneAlertaSemanal(c.categoria, c.prox_alerta)
 
         items.push({
           id: c.id,
@@ -138,12 +112,7 @@ export default function SupervisorPage() {
         })
       }
 
-      items.sort((a, b) => {
-        const orden: Record<string, number> = { vencida: 0, pendiente: 2, sin_iniciar: 3, conciliada: 4 }
-        const oa = a.alerta_semanal && a.estado !== "vencida" ? 1 : orden[a.estado]
-        const ob = b.alerta_semanal && b.estado !== "vencida" ? 1 : orden[b.estado]
-        return oa - ob
-      })
+      items.sort(compararUrgencia)
 
       setCuentas(items)
       setLoading(false)

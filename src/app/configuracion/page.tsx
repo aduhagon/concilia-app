@@ -126,27 +126,40 @@ export default function ConfiguracionPage() {
     setSubiendo(true)
     setResultado(null)
 
-    const ext = file.name.split(".").pop()
-    const path = `${grupoId}/${tipo}.${ext}`
+    try {
+      const ext = file.name.split(".").pop() ?? "png"
+      const path = `${grupoId}/${tipo}.${ext}`
 
-    const { error: upError } = await supabase.storage
-      .from("assets")
-      .upload(path, file, { upsert: true })
+      const { error: upError } = await supabase.storage
+        .from("assets")
+        .upload(path, file, { upsert: true, contentType: file.type || "image/png" })
 
-    if (upError) {
-      setResultado({ tipo: "error", msg: "Error al subir: " + upError.message })
+      if (upError) {
+        console.error("Error storage:", upError)
+        setResultado({ tipo: "error", msg: "Error al subir imagen: " + upError.message })
+        setSubiendo(false)
+        return
+      }
+
+      const { data: urlData } = supabase.storage
+        .from("assets")
+        .getPublicUrl(path)
+
+      const url = urlData.publicUrl + "?t=" + Date.now()
+      const campo = tipo === "logo" ? "logo_url" : "bg_login_url"
+      setForm(f => ({ ...f, [campo]: url }))
+      setResultado({ tipo: "ok", msg: "Imagen subida. Hacé click en Guardar cambios para aplicar." })
+    } catch (e) {
+      console.error("Error inesperado:", e)
+      setResultado({ tipo: "error", msg: "Error inesperado al subir la imagen." })
+    } finally {
       setSubiendo(false)
-      return
     }
+  }
 
-    const { data: urlData } = supabase.storage
-      .from("assets")
-      .getPublicUrl(path)
-
-    const url = urlData.publicUrl
+  function quitarImagen(tipo: "logo" | "bg") {
     const campo = tipo === "logo" ? "logo_url" : "bg_login_url"
-    setForm(f => ({ ...f, [campo]: url }))
-    setSubiendo(false)
+    setForm(f => ({ ...f, [campo]: null }))
   }
 
   async function guardar() {
@@ -276,14 +289,24 @@ export default function ConfiguracionPage() {
                   </div>
                 )}
                 <div>
-                  <button
-                    onClick={() => logoRef.current?.click()}
-                    disabled={subiendoLogo}
-                    className="btn btn-secondary text-xs"
-                  >
-                    <Upload size={12} />
-                    {subiendoLogo ? "Subiendo…" : "Subir logo"}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => logoRef.current?.click()}
+                      disabled={subiendoLogo}
+                      className="btn btn-secondary text-xs"
+                    >
+                      <Upload size={12} />
+                      {subiendoLogo ? "Subiendo…" : "Subir logo"}
+                    </button>
+                    {form.logo_url && (
+                      <button
+                        onClick={() => quitarImagen("logo")}
+                        className="btn btn-secondary text-xs text-danger border-danger/30"
+                      >
+                        Quitar
+                      </button>
+                    )}
+                  </div>
                   <div className="text-2xs text-ink-400 mt-1">PNG, SVG · máx 2MB · fondo transparente ideal</div>
                 </div>
               </div>
@@ -312,14 +335,24 @@ export default function ConfiguracionPage() {
                   </div>
                 )}
                 <div>
-                  <button
-                    onClick={() => bgRef.current?.click()}
-                    disabled={subiendoBg}
-                    className="btn btn-secondary text-xs"
-                  >
-                    <Upload size={12} />
-                    {subiendoBg ? "Subiendo…" : "Subir imagen"}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => bgRef.current?.click()}
+                      disabled={subiendoBg}
+                      className="btn btn-secondary text-xs"
+                    >
+                      <Upload size={12} />
+                      {subiendoBg ? "Subiendo…" : "Subir imagen"}
+                    </button>
+                    {form.bg_login_url && (
+                      <button
+                        onClick={() => quitarImagen("bg")}
+                        className="btn btn-secondary text-xs text-danger border-danger/30"
+                      >
+                        Quitar
+                      </button>
+                    )}
+                  </div>
                   <div className="text-2xs text-ink-400 mt-1">JPG, PNG · máx 5MB · recomendado 1920×1080</div>
                 </div>
               </div>

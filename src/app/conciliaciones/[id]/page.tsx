@@ -324,7 +324,7 @@ export default function DetalleConciliacionPage() {
     // Recargar
     const { data: cab } = await supabase
       .from("conciliaciones")
-      .select("*, contrapartes(nombre)")
+      .select("*, contrapartes(nombre, conciliador_id)")
       .eq("id", c.id)
       .single()
     const { data: hist } = await supabase
@@ -340,8 +340,44 @@ export default function DetalleConciliacionPage() {
     setMostrarModalAprobacion(false)
     setMostrarModalReapertura(false)
 
-    // Mostrar banner de confirmación con paso siguiente
+    // Enviar notificaciones según la acción
     const nombreContraparte = (cab as any)?.contrapartes?.nombre ?? ""
+    const periodo = c.periodo_label ?? null
+    const conciliadorId = (c as any).contrapartes?.conciliador_id ?? null
+
+    if (accion === "cerrado_operativo") {
+      // Notificar a supervisores del grupo
+      await supabase.rpc("crear_notificaciones_cierre", {
+        p_conciliacion_id:   c.id,
+        p_operativo_id:      usuarioActual.id,
+        p_operativo_nombre:  usuarioActual.nombre,
+        p_contraparte:       nombreContraparte,
+        p_periodo:           periodo,
+      })
+    } else if (accion === "aprobado" && conciliadorId) {
+      // Notificar al operativo que concilió
+      await supabase.rpc("crear_notificacion_aprobacion", {
+        p_conciliacion_id:   c.id,
+        p_supervisor_id:     usuarioActual.id,
+        p_supervisor_nombre: usuarioActual.nombre,
+        p_contraparte:       nombreContraparte,
+        p_periodo:           periodo,
+        p_conciliador_id:    conciliadorId,
+      })
+    } else if (accion === "reabierto" && conciliadorId) {
+      // Notificar al operativo que se reabrió
+      await supabase.rpc("crear_notificacion_reapertura", {
+        p_conciliacion_id:   c.id,
+        p_supervisor_id:     usuarioActual.id,
+        p_supervisor_nombre: usuarioActual.nombre,
+        p_contraparte:       nombreContraparte,
+        p_periodo:           periodo,
+        p_conciliador_id:    conciliadorId,
+        p_motivo:            observacion || null,
+      })
+    }
+
+    // Mostrar banner de confirmación con paso siguiente
     if (accion === "cerrado_operativo") {
       setBannerConfirmacion({ tipo: "cierre", nombreContraparte })
       toast.show("✓ Conciliación cerrada y firmada", "ok")

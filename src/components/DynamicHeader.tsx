@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import { supabase } from "@/lib/supabase-client"
 import { useUser } from "@/lib/user-context"
 import HeaderUsuario from "@/components/HeaderUsuario"
+import NotificacionesBell from "@/components/NotificacionesBell"
 
 type Config = {
   color_primario: string
@@ -204,6 +205,7 @@ export default function DynamicHeader() {
               + Nueva conciliación
             </Link>
           )}
+          <NotificacionesBell />
           <HeaderUsuario />
         </div>
       </div>

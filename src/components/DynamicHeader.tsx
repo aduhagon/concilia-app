@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { supabase } from "@/lib/supabase-client"
+import { useUser } from "@/lib/user-context"
 import HeaderUsuario from "@/components/HeaderUsuario"
 
 type Config = {
@@ -27,17 +28,43 @@ const DEFAULT: Config = {
 // Rutas donde NO se muestra el header
 const RUTAS_SIN_HEADER = ["/login", "/activar", "/cambiar-password"]
 
+// Definición del menú con permisos por rol.
+// roles: undefined = todos los roles autenticados lo ven.
+type NavItem = {
+  href: string
+  label: string
+  roles?: Array<"admin" | "supervisor" | "operativo">
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { href: "/",                    label: "Inicio" },
+  { href: "/conciliaciones",      label: "Historial" },
+  { href: "/plantillas",          label: "Plantillas",        roles: ["admin", "supervisor"] },
+  { href: "/supervisor",          label: "Tablero",           roles: ["admin", "supervisor"] },
+  { href: "/historial-categorias",label: "Hist. categorías",  roles: ["admin", "supervisor"] },
+  { href: "/tipos-cambio",        label: "Tipos de cambio",   roles: ["admin", "supervisor"] },
+  { href: "/sociedades",          label: "Sociedades",        roles: ["admin"] },
+  { href: "/usuarios",            label: "Usuarios",          roles: ["admin"] },
+  { href: "/configuracion",       label: "Configuración",     roles: ["admin"] },
+]
+
 export default function DynamicHeader() {
   const pathname = usePathname()
   const [cfg, setCfg] = useState<Config>(DEFAULT)
+  const { usuario } = useUser()
 
-  // No mostrar en rutas públicas
   const esRutaPublica = RUTAS_SIN_HEADER.some(r => pathname.startsWith(r))
+
+  // Filtrar ítems según el rol del usuario
+  const itemsVisibles = NAV_ITEMS.filter(item => {
+    if (!item.roles) return true                          // visible para todos
+    if (!usuario) return false                            // sin sesión: ocultar ítems restringidos
+    return item.roles.includes(usuario.rol)
+  })
 
   useEffect(() => {
     if (esRutaPublica) return
 
-    // Intentar desde sessionStorage primero
     const cached = sessionStorage.getItem("concilia_config")
     if (cached) {
       try {
@@ -48,7 +75,6 @@ export default function DynamicHeader() {
       } catch {}
     }
 
-    // Refrescar desde Supabase
     async function cargar() {
       const { data: grupo } = await supabase
         .from("grupos_trabajo")
@@ -74,7 +100,6 @@ export default function DynamicHeader() {
     cargar()
   }, [esRutaPublica, pathname])
 
-  // No renderizar en rutas públicas
   if (esRutaPublica) return null
 
   return (
@@ -101,37 +126,35 @@ export default function DynamicHeader() {
               {cfg.nombre_display ?? "Concilia"}
             </span>
           </Link>
+
           <nav className="flex items-center gap-1 text-xs">
-            {[
-              { href: "/", label: "Inicio" },
-              { href: "/plantillas", label: "Plantillas" },
-              { href: "/conciliaciones", label: "Historial" },
-              { href: "/supervisor", label: "Tablero" },
-              { href: "/historial-categorias", label: "Hist. categorías" },
-              { href: "/usuarios", label: "Usuarios" },
-              { href: "/tipos-cambio", label: "Tipos de cambio" },
-              { href: "/sociedades", label: "Sociedades" },
-              { href: "/configuracion", label: "Configuración" },
-      
-            ].map(({ href, label }) => (
+            {itemsVisibles.map(({ href, label }) => (
               <Link
                 key={href}
                 href={href}
-                className="px-3 py-1.5 text-white/60 hover:text-white hover:bg-white/10 transition-colors rounded"
+                className={`px-3 py-1.5 transition-colors rounded ${
+                  pathname === href || (href !== "/" && pathname.startsWith(href))
+                    ? "text-white bg-white/20"
+                    : "text-white/60 hover:text-white hover:bg-white/10"
+                }`}
               >
                 {label}
               </Link>
             ))}
           </nav>
         </div>
+
         <div className="flex items-center gap-3">
-          <Link
-            href="/nueva"
-            className="px-3 py-1.5 text-sm font-semibold rounded text-white"
-            style={{ background: cfg.color_acento }}
-          >
-            + Nueva conciliación
-          </Link>
+          {/* Ocultar "Nueva conciliación" para roles sin acceso a /nueva */}
+          {usuario && (usuario.rol === "admin" || usuario.rol === "supervisor" || usuario.rol === "operativo") && (
+            <Link
+              href="/nueva"
+              className="px-3 py-1.5 text-sm font-semibold rounded text-white"
+              style={{ background: cfg.color_acento }}
+            >
+              + Nueva conciliación
+            </Link>
+          )}
           <HeaderUsuario />
         </div>
       </div>

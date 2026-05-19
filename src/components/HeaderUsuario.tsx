@@ -1,16 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { supabase } from "@/lib/supabase-client"
 import { useRouter } from "next/navigation"
 import { LogOut, ChevronDown, User } from "lucide-react"
-
-type UsuarioBasico = {
-  nombre: string
-  email: string
-  rol: string
-  grupo_nombre: string
-}
+import { useUser } from "@/lib/user-context"
 
 const ROL_LABEL: Record<string, string> = {
   admin: "Admin",
@@ -20,29 +14,8 @@ const ROL_LABEL: Record<string, string> = {
 
 export default function HeaderUsuario() {
   const router = useRouter()
-  const [usuario, setUsuario] = useState<UsuarioBasico | null>(null)
+  const { usuario } = useUser()
   const [abierto, setAbierto] = useState(false)
-
-  useEffect(() => {
-    async function cargar() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data } = await supabase
-        .from("usuarios")
-        .select("nombre, email, rol, grupo_id, grupos_trabajo(nombre)")
-        .eq("id", user.id)
-        .single()
-      if (data) {
-        setUsuario({
-          nombre: data.nombre,
-          email: data.email,
-          rol: data.rol,
-          grupo_nombre: (data.grupos_trabajo as any)?.nombre ?? "",
-        })
-      }
-    }
-    cargar()
-  }, [])
 
   async function cerrarSesion() {
     await supabase.auth.signOut()
@@ -70,17 +43,13 @@ export default function HeaderUsuario() {
 
       {abierto && (
         <>
-          {/* Backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setAbierto(false)} />
-
-          {/* Dropdown */}
           <div className="absolute right-0 top-full mt-1 w-56 bg-white border border-ink-200 shadow-md z-50">
             <div className="px-3 py-2.5 border-b border-ink-200">
               <div className="text-xs font-semibold text-ink-900">{usuario.nombre}</div>
               <div className="text-2xs text-ink-500 mt-0.5">{usuario.email}</div>
               <div className="text-2xs text-ink-400 mt-0.5">{usuario.grupo_nombre} · {ROL_LABEL[usuario.rol]}</div>
             </div>
-
             <div className="py-1">
               <button
                 onClick={() => { setAbierto(false); router.push("/cambiar-password") }}

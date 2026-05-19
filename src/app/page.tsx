@@ -10,6 +10,7 @@ import {
   Plus, Clock, Bell, TrendingUp, Users, Calendar
 } from "lucide-react"
 import { formatNumCompact, formatNum, antiguedad } from "@/lib/format"
+import CategoriaBadge from "@/components/CategoriaBadge"
 
 type Rol = "admin" | "supervisor" | "operativo" | null
 
@@ -34,15 +35,6 @@ type CuentaOperativo = {
   alerta_semanal: boolean
 }
 
-const CAT_COLORS: Record<string, string> = {
-  A: "bg-danger-light text-danger",
-  B: "bg-warn-light text-warn",
-  C: "bg-yellow-50 text-yellow-700",
-  D: "bg-ok-light text-ok",
-  E: "bg-info-light text-info",
-  F: "bg-ink-100 text-ink-500",
-}
-
 function calcularEstado(prox: string | null, ultimaConc: string | null, categoria: string | null): CuentaOperativo["estado"] {
   if (!ultimaConc) return "sin_iniciar"
   const hoy = new Date()
@@ -62,10 +54,8 @@ export default function HomePage() {
   const [usuarioId, setUsuarioId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Para operativo
   const [cuentas, setCuentas] = useState<CuentaOperativo[]>([])
 
-  // Para supervisor/admin
   const [statsSuper, setStatsSuper] = useState({
     total: 0, conciliadas: 0, vencidas: 0, pendientes: 0, alertas: 0
   })
@@ -141,7 +131,6 @@ export default function HomePage() {
       })
     }
 
-    // Ordenar por urgencia
     const orden = { vencida: 0, pendiente: 2, sin_iniciar: 3, conciliada: 4 }
     items.sort((a, b) => {
       const oa = a.alerta_semanal && a.estado !== "vencida" ? 1 : orden[a.estado]
@@ -354,7 +343,6 @@ function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
   }
   const est = estadoConfig[c.estado]
 
-  // Estado de cierre de la última conciliación
   const estadoCierre = c.ultima_conc?.estado ?? null
   const esSupervisor = rol === "supervisor" || rol === "admin"
   const puedeNuevaConc = !c.ultima_conc || c.estado !== "conciliada"
@@ -402,11 +390,7 @@ function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
 
       {/* Categoría y diferencia */}
       <div className="hidden md:flex items-center gap-4 px-4">
-        {c.categoria && (
-          <span className={`text-2xs font-bold px-1.5 py-0.5 rounded font-mono ${CAT_COLORS[c.categoria] ?? ""}`}>
-            {c.categoria}
-          </span>
-        )}
+        {c.categoria && <CategoriaBadge categoria={c.categoria} />}
         {c.ultima_conc && (
           <div className="text-right">
             <div className="text-2xs text-ink-400">Diferencia</div>

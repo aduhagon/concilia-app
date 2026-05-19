@@ -9,6 +9,7 @@ import {
   CheckCircle2, AlertCircle, Clock, TrendingUp,
   Building2, Search, Download, Bell
 } from "lucide-react"
+import CategoriaBadge, { CAT_FREQ } from "@/components/CategoriaBadge"
 
 type CuentaEstado = {
   id: string
@@ -27,20 +28,6 @@ type CuentaEstado = {
   ultima_diferencia: number | null
   estado: "conciliada" | "pendiente" | "vencida" | "sin_iniciar"
   alerta_semanal: boolean
-}
-
-const CAT_COLORS: Record<string, string> = {
-  A: "bg-danger-light text-danger",
-  B: "bg-warn-light text-warn",
-  C: "bg-yellow-50 text-yellow-700",
-  D: "bg-ok-light text-ok",
-  E: "bg-info-light text-info",
-  F: "bg-ink-100 text-ink-500",
-}
-
-const CAT_FREQ: Record<string, string> = {
-  A: "Semanal + mensual", B: "Mensual", C: "Anual",
-  D: "Anual exc.", E: "Manual", F: "Manual",
 }
 
 const ESTADO_CONFIG = {
@@ -62,20 +49,16 @@ function calcularEstado(cuenta: {
 
   const ultimaFecha = new Date(cuenta.ultima_conciliacion)
 
-  // Conciliada este mes
   if (ultimaFecha >= inicioMes) return "conciliada"
 
-  // Si tiene fecha de próxima conciliación calculada
   if (cuenta.prox_conciliacion) {
     const proxFecha = new Date(cuenta.prox_conciliacion)
     if (proxFecha < hoy) return "vencida"
     return "pendiente"
   }
 
-  // E y F sin fecha — siempre pendiente
   if (cuenta.categoria === "E" || cuenta.categoria === "F") return "pendiente"
 
-  // Fallback para A y B: vencida si no se concilió este mes
   return "vencida"
 }
 
@@ -131,7 +114,6 @@ export default function SupervisorPage() {
           categoria: c.categoria,
         })
 
-        // Alerta semanal: solo cat A y si prox_alerta ya pasó
         const alertaSemanal = c.categoria === "A" && c.prox_alerta
           ? new Date(c.prox_alerta) <= new Date()
           : false
@@ -156,7 +138,6 @@ export default function SupervisorPage() {
         })
       }
 
-      // Ordenar: vencidas → alerta semanal → pendientes → sin_iniciar → conciliadas
       items.sort((a, b) => {
         const orden: Record<string, number> = { vencida: 0, pendiente: 2, sin_iniciar: 3, conciliada: 4 }
         const oa = a.alerta_semanal && a.estado !== "vencida" ? 1 : orden[a.estado]
@@ -358,11 +339,10 @@ export default function SupervisorPage() {
                         </div>
                       </td>
                       <td className="px-3 py-3">
-                        {c.categoria ? (
-                          <span className={`text-2xs font-bold px-1.5 py-0.5 rounded font-mono ${CAT_COLORS[c.categoria]}`}>
-                            {c.categoria}
-                          </span>
-                        ) : <span className="text-ink-300">—</span>}
+                        {c.categoria
+                          ? <CategoriaBadge categoria={c.categoria} />
+                          : <span className="text-ink-300">—</span>
+                        }
                       </td>
                       <td className="px-3 py-3 hidden md:table-cell">
                         <span className="text-xs text-ink-500">{c.sociedad ?? "—"}</span>
@@ -417,31 +397,26 @@ export default function SupervisorPage() {
                       </td>
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-1.5">
-                          {/* Sin conciliación → botón nueva */}
                           {!c.ultima_conc_id && (
                             <Link href={`/nueva?contraparte=${c.id}`} className="btn btn-primary text-2xs py-1 px-2">
                               + Conciliar
                             </Link>
                           )}
-                          {/* En proceso / finalizada → botón Cerrar */}
                           {c.ultima_conc_id && (c.ultima_conc_estado === "en_proceso" || c.ultima_conc_estado === "borrador" || c.ultima_conc_estado === "finalizada" || c.ultima_conc_estado === "reabierto") && (
                             <Link href={`/conciliaciones/${c.ultima_conc_id}`} className="btn btn-secondary text-2xs py-1 px-2 text-warn border-warn/30">
                               Cerrar →
                             </Link>
                           )}
-                          {/* Cerrado por operativo → botón Aprobar */}
                           {c.ultima_conc_id && c.ultima_conc_estado === "cerrado_operativo" && (
                             <Link href={`/conciliaciones/${c.ultima_conc_id}`} className="btn btn-secondary text-2xs py-1 px-2 text-ok border-ok/30">
                               Aprobar →
                             </Link>
                           )}
-                          {/* Aprobada → botón Ver */}
                           {c.ultima_conc_id && c.ultima_conc_estado === "aprobado" && (
                             <Link href={`/conciliaciones/${c.ultima_conc_id}`} className="btn btn-secondary text-2xs py-1 px-2">
                               Ver ✓
                             </Link>
                           )}
-                          {/* Sin estado conocido → botón genérico */}
                           {c.ultima_conc_id && !["en_proceso","borrador","finalizada","reabierto","cerrado_operativo","aprobado"].includes(c.ultima_conc_estado ?? "") && (
                             <Link href={`/conciliaciones/${c.ultima_conc_id}`} className="btn btn-secondary text-2xs py-1 px-2">
                               Ver

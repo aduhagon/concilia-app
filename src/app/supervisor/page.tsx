@@ -62,58 +62,35 @@ export default function SupervisorPage() {
 
   useEffect(() => {
     async function cargar() {
-      const { data: contras } = await supabase
-        .from("contrapartes")
-        .select("id, nombre, cuit, tipo, categoria, sociedad, activo, prox_conciliacion, prox_alerta")
-        .eq("activo", true)
-        .order("nombre")
+      const { data, error } = await supabase
+        .rpc("get_cuentas_supervision")
 
-      const items: CuentaEstado[] = []
+      if (error) { console.error("get_cuentas_supervision:", error); setLoading(false); return }
 
-      for (const c of contras ?? []) {
-        const { data: ultima } = await supabase
-          .from("conciliaciones")
-          .select("id, created_at, diferencia_final_ars, estado")
-          .eq("contraparte_id", c.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        const { count } = await supabase
-          .from("conciliaciones")
-          .select("id", { count: "exact", head: true })
-          .eq("contraparte_id", c.id)
-
-        const estado = calcularEstado({
-          ultima_conciliacion: ultima?.created_at ?? null,
+      const items: CuentaEstado[] = (data ?? []).map((c: any) => ({
+        id: c.id,
+        nombre: c.nombre,
+        cuit: c.cuit,
+        tipo: c.tipo,
+        categoria: c.categoria,
+        sociedad: c.sociedad,
+        activo: c.activo ?? true,
+        prox_conciliacion: c.prox_conciliacion,
+        prox_alerta: c.prox_alerta,
+        total_conciliaciones: Number(c.total_conciliaciones),
+        ultima_conciliacion: c.ultima_created_at ?? null,
+        ultima_conc_id: c.ultima_id ?? null,
+        ultima_conc_estado: c.ultima_estado ?? null,
+        ultima_diferencia: c.ultima_diferencia_ars ?? null,
+        estado: calcularEstado({
+          ultima_conciliacion: c.ultima_created_at ?? null,
           prox_conciliacion: c.prox_conciliacion,
           categoria: c.categoria,
-        })
-
-        const alertaSemanal = tieneAlertaSemanal(c.categoria, c.prox_alerta)
-
-        items.push({
-          id: c.id,
-          nombre: c.nombre,
-          cuit: c.cuit,
-          tipo: c.tipo,
-          categoria: c.categoria,
-          sociedad: c.sociedad,
-          activo: c.activo ?? true,
-          prox_conciliacion: c.prox_conciliacion,
-          prox_alerta: c.prox_alerta,
-          total_conciliaciones: count ?? 0,
-          ultima_conciliacion: ultima?.created_at ?? null,
-          ultima_conc_id: ultima?.id ?? null,
-          ultima_conc_estado: ultima?.estado ?? null,
-          ultima_diferencia: ultima?.diferencia_final_ars ?? null,
-          estado,
-          alerta_semanal: alertaSemanal,
-        })
-      }
+        }),
+        alerta_semanal: tieneAlertaSemanal(c.categoria, c.prox_alerta),
+      }))
 
       items.sort(compararUrgencia)
-
       setCuentas(items)
       setLoading(false)
     }

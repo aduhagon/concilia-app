@@ -76,82 +76,62 @@ export default function HomePage() {
   }, [])
 
   async function cargarCuentasOperativo(uid: string) {
-    const { data: contras } = await supabase
-      .from("contrapartes")
-      .select("id, nombre, cuit, categoria, sociedad, prox_conciliacion, prox_alerta")
-      .eq("conciliador_id", uid)
-      .eq("activo", true)
-      .order("nombre")
+    const { data, error } = await supabase
+      .rpc("get_cuentas_operativo", { p_usuario_id: uid })
 
-    const items: CuentaOperativo[] = []
-    const hoy = new Date()
+    if (error) { console.error("get_cuentas_operativo:", error); return }
 
-    for (const c of contras ?? []) {
-      const { data: ultima } = await supabase
-        .from("conciliaciones")
-        .select("id, periodo_label, diferencia_final_ars, created_at, saldo_final_compania_ars, estado")
-        .eq("contraparte_id", c.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      const { count } = await supabase
-        .from("conciliaciones")
-        .select("id", { count: "exact", head: true })
-        .eq("contraparte_id", c.id)
-
-      const estado = calcularEstado({ ultima_conciliacion: ultima?.created_at ?? null, prox_conciliacion: c.prox_conciliacion, categoria: c.categoria })
-      const alertaSemanal = tieneAlertaSemanal(c.categoria, c.prox_alerta)
-
-      items.push({
-        id: c.id,
-        nombre: c.nombre,
-        cuit: c.cuit,
-        categoria: c.categoria,
-        sociedad: c.sociedad,
+    const items: CuentaOperativo[] = (data ?? []).map((c: any) => ({
+      id: c.id,
+      nombre: c.nombre,
+      cuit: c.cuit,
+      categoria: c.categoria,
+      sociedad: c.sociedad,
+      prox_conciliacion: c.prox_conciliacion,
+      prox_alerta: c.prox_alerta,
+      ultima_conc: c.ultima_id ? {
+        id: c.ultima_id,
+        periodo_label: c.ultima_periodo_label,
+        diferencia_final_ars: c.ultima_diferencia_ars,
+        created_at: c.ultima_created_at,
+        saldo_final_compania_ars: c.ultima_saldo_compania,
+        estado: c.ultima_estado,
+      } : null,
+      total_conciliaciones: Number(c.total_conciliaciones),
+      estado: calcularEstado({
+        ultima_conciliacion: c.ultima_created_at ?? null,
         prox_conciliacion: c.prox_conciliacion,
-        prox_alerta: c.prox_alerta,
-        ultima_conc: ultima ?? null,
-        total_conciliaciones: count ?? 0,
-        estado,
-        alerta_semanal: alertaSemanal,
-      })
-    }
+        categoria: c.categoria,
+      }),
+      alerta_semanal: tieneAlertaSemanal(c.categoria, c.prox_alerta),
+    }))
 
     items.sort(compararUrgencia)
-
     setCuentas(items)
   }
 
   async function cargarStatsSupervision() {
-    const { data: contras } = await supabase
-      .from("contrapartes")
-      .select("id, categoria, prox_conciliacion, prox_alerta")
-      .eq("activo", true)
+    const { data, error } = await supabase
+      .rpc("get_cuentas_supervision")
 
-    const hoy = new Date()
-    const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+    if (error) { console.error("get_cuentas_supervision:", error); return }
+
     let conciliadas = 0, vencidas = 0, pendientes = 0, alertas = 0
 
-    for (const c of contras ?? []) {
-      const { data: ultima } = await supabase
-        .from("conciliaciones")
-        .select("created_at")
-        .eq("contraparte_id", c.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      const estado = calcularEstado({ ultima_conciliacion: ultima?.created_at ?? null, prox_conciliacion: c.prox_conciliacion, categoria: c.categoria })
+    for (const c of data ?? []) {
+      const estado = calcularEstado({
+        ultima_conciliacion: c.ultima_created_at ?? null,
+        prox_conciliacion: c.prox_conciliacion,
+        categoria: c.categoria,
+      })
       if (estado === "conciliada") conciliadas++
       else if (estado === "vencida") vencidas++
       else pendientes++
-
-      if (c.categoria === "A" && c.prox_alerta && new Date(c.prox_alerta) <= hoy) alertas++
+      if (tieneAlertaSemanal(c.categoria, c.prox_alerta)) alertas++
     }
 
     setStatsSuper({
-      total: contras?.length ?? 0,
+      total: data?.length ?? 0,
       conciliadas, vencidas, pendientes, alertas,
     })
   }

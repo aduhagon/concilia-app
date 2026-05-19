@@ -297,15 +297,34 @@ function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
   const dif = c.ultima_conc?.diferencia_final_ars ?? 0
   const difOk = Math.abs(dif) < 1
 
-  const estadoConfig = {
-    conciliada: { color: "bg-ok-light text-ok", dot: "bg-ok", label: "Conciliada" },
-    pendiente: { color: "bg-warn-light text-warn", dot: "bg-warn", label: "Pendiente" },
-    vencida: { color: "bg-danger-light text-danger", dot: "bg-danger", label: "Vencida" },
-    sin_iniciar: { color: "bg-ink-100 text-ink-500", dot: "bg-ink-300", label: "Sin iniciar" },
+  const estadoCalendario: Record<string, { color: string; dot: string; label: string }> = {
+    conciliada:  { color: "bg-ok-light text-ok",       dot: "bg-ok",       label: "Conciliada"  },
+    pendiente:   { color: "bg-warn-light text-warn",   dot: "bg-warn",     label: "Pendiente"   },
+    vencida:     { color: "bg-danger-light text-danger",dot: "bg-danger",  label: "Vencida"     },
+    sin_iniciar: { color: "bg-ink-100 text-ink-500",   dot: "bg-ink-300",  label: "Sin iniciar" },
   }
-  const est = estadoConfig[c.estado]
+
+  const estadoCierreConfig: Record<string, { color: string; dot: string; label: string; prioridad: boolean }> = {
+    borrador:          { color: "bg-ink-100 text-ink-500",       dot: "bg-ink-300",  label: "Borrador",          prioridad: true  },
+    en_proceso:        { color: "bg-info-light text-info",       dot: "bg-info",     label: "En proceso",        prioridad: true  },
+    finalizada:        { color: "bg-warn-light text-warn",       dot: "bg-warn",     label: "Por cerrar",        prioridad: true  },
+    cerrado_operativo: { color: "bg-warn-light text-warn",       dot: "bg-warn",     label: "Pdte. aprobación",  prioridad: true  },
+    reabierto:         { color: "bg-danger-light text-danger",   dot: "bg-danger",   label: "Reabierta",         prioridad: true  },
+    aprobado:          { color: "bg-ok-light text-ok",           dot: "bg-ok",       label: "Aprobada",          prioridad: false },
+  }
 
   const estadoCierre = c.ultima_conc?.estado ?? null
+  const cierreCfg = estadoCierre ? estadoCierreConfig[estadoCierre] : null
+
+  // Badge unificado: el estado de cierre prevalece cuando tiene prioridad alta,
+  // en caso contrario (aprobado, sin estado) se muestra el estado calendario.
+  const badgeUnificado = cierreCfg?.prioridad
+    ? cierreCfg
+    : estadoCalendario[c.estado]
+
+  // El dot lateral siempre refleja la urgencia de calendario
+  const dotColor = estadoCalendario[c.estado]?.dot ?? "bg-ink-300"
+
   const esSupervisor = rol === "supervisor" || rol === "admin"
   const puedeNuevaConc = !c.ultima_conc || c.estado !== "conciliada"
   const puedeCerrar = c.ultima_conc && (
@@ -314,20 +333,10 @@ function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
   )
   const puedeAprobar = esSupervisor && c.ultima_conc && estadoCierre === "cerrado_operativo"
 
-  const ESTADO_CIERRE_CONFIG: Record<string, { label: string; color: string }> = {
-    borrador: { label: "Borrador", color: "bg-ink-100 text-ink-500" },
-    en_proceso: { label: "En proceso", color: "bg-info-light text-info" },
-    finalizada: { label: "Por cerrar", color: "bg-warn-light text-warn" },
-    cerrado_operativo: { label: "Pdte. aprobación", color: "bg-warn-light text-warn" },
-    aprobado: { label: "Aprobada", color: "bg-ok-light text-ok" },
-    reabierto: { label: "Reabierta", color: "bg-danger-light text-danger" },
-  }
-  const cierreCfg = estadoCierre ? ESTADO_CIERRE_CONFIG[estadoCierre] : null
-
   return (
     <div className="flex items-center px-4 py-3 hover:bg-ink-50 transition-colors group">
-      {/* Indicador de urgencia */}
-      <div className={`w-1 self-stretch rounded-full mr-3 flex-shrink-0 ${est.dot}`} />
+      {/* Indicador de urgencia — siempre refleja calendario */}
+      <div className={`w-1 self-stretch rounded-full mr-3 flex-shrink-0 ${dotColor}`} />
 
       <Link
         href={c.ultima_conc ? `/conciliaciones/${c.ultima_conc.id}` : `/nueva?contraparte=${c.id}`}
@@ -363,18 +372,11 @@ function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
         )}
       </div>
 
-      {/* Estado de conciliación */}
-      <span className={`text-2xs font-semibold inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full mr-2 ${est.color}`}>
-        <span className={`w-1.5 h-1.5 rounded-full ${est.dot}`} />
-        {est.label}
+      {/* Badge unificado — un solo indicador de estado */}
+      <span className={`text-2xs font-semibold inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full mr-2 ${badgeUnificado.color}`}>
+        <span className={`w-1.5 h-1.5 rounded-full ${badgeUnificado.dot}`} />
+        {badgeUnificado.label}
       </span>
-
-      {/* Badge estado cierre */}
-      {cierreCfg && (
-        <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full mr-2 hidden md:inline-flex ${cierreCfg.color}`}>
-          {cierreCfg.label}
-        </span>
-      )}
 
       {/* Botones de acción */}
       <div className="flex items-center gap-1.5 flex-shrink-0">

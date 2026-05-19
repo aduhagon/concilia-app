@@ -9,7 +9,8 @@ import { supabase } from "@/lib/supabase-client"
 import { registrar } from "@/lib/auditoria"
 import type { AjusteManual, MovimientoResultado, StatusPendiente } from "@/types"
 import { STATUS_LABELS } from "@/types"
-import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User, Lock, Unlock, ChevronDown, History, Printer, Shield, KeyRound } from "lucide-react"
+import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User, Lock, Unlock, ChevronDown, History, Printer, Shield, KeyRound, ArrowRight } from "lucide-react"
+import { useToast } from "@/components/Toast"
 
 type Conciliacion = {
   id: string
@@ -76,6 +77,11 @@ export default function DetalleConciliacionPage() {
   const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
   const [mostrarModalAprobacion, setMostrarModalAprobacion] = useState(false)
   const [mostrarModalReapertura, setMostrarModalReapertura] = useState(false)
+  const [bannerConfirmacion, setBannerConfirmacion] = useState<{
+    tipo: "cierre" | "aprobacion" | "reapertura"
+    nombreContraparte: string
+  } | null>(null)
+  const toast = useToast()
   const [observacion, setObservacion] = useState("")
   const [accionando, setAccionando] = useState(false)
   const [generandoPDF, setGenerandoPDF] = useState(false)
@@ -333,11 +339,53 @@ export default function DetalleConciliacionPage() {
     setMostrarModalCierre(false)
     setMostrarModalAprobacion(false)
     setMostrarModalReapertura(false)
+
+    // Mostrar banner de confirmación con paso siguiente
+    const nombreContraparte = (cab as any)?.contrapartes?.nombre ?? ""
+    if (accion === "cerrado_operativo") {
+      setBannerConfirmacion({ tipo: "cierre", nombreContraparte })
+      toast.show("✓ Conciliación cerrada y firmada", "ok")
+    } else if (accion === "aprobado") {
+      setBannerConfirmacion({ tipo: "aprobacion", nombreContraparte })
+      toast.show("✓ Conciliación aprobada", "ok")
+    } else if (accion === "reabierto") {
+      setBannerConfirmacion({ tipo: "reapertura", nombreContraparte })
+      toast.show("Conciliación reabierta", "info")
+    }
+
     setAccionando(false)
   }
 
   if (loading) return <div className="text-sm text-ink-400 text-center py-8">Cargando...</div>
   if (!c) return <div className="text-sm text-error text-center py-8">No se encontró la conciliación</div>
+
+  // Mensajes de paso siguiente por tipo de acción
+  const BANNER_CONFIG = {
+    cierre: {
+      color: "bg-ok-light border-ok/30",
+      iconColor: "text-ok",
+      titulo: "Conciliación cerrada y firmada",
+      mensaje: "Quedó registrada con tu firma digital. El supervisor debe revisarla y aprobarla para dar el proceso por finalizado.",
+      cta: null,
+      ctaLabel: null,
+    },
+    aprobacion: {
+      color: "bg-ok-light border-ok/30",
+      iconColor: "text-ok",
+      titulo: "Conciliación aprobada",
+      mensaje: "Fue aprobada con tu firma digital. El proceso de este período está completo.",
+      cta: "/supervisor",
+      ctaLabel: "Volver al tablero →",
+    },
+    reapertura: {
+      color: "bg-warn-light border-warn/30",
+      iconColor: "text-warn",
+      titulo: "Conciliación reabierta",
+      mensaje: "El operativo puede volver a modificarla. Cuando esté lista, deberá cerrarla nuevamente para que la apruebes.",
+      cta: null,
+      ctaLabel: null,
+    },
+  }
 
   // Agrupar pendientes por categoría (status)
   const grupos = agruparPorStatus(pendientes)

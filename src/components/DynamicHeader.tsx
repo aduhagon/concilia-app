@@ -126,6 +126,22 @@ export default function DynamicHeader() {
       }
     }
     cargar()
+
+    // Escuchar cambios de preview en vivo desde /configuracion
+    function onPreview() {
+      const cached = sessionStorage.getItem("concilia_config")
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached)
+          const config = { ...DEFAULT, ...parsed }
+          setCfg(config)
+          document.body.style.backgroundColor = config.color_fondo
+          document.body.style.fontFamily = `"${config.tipografia}", system-ui, sans-serif`
+        } catch {}
+      }
+    }
+    window.addEventListener("concilia_config_preview", onPreview)
+    return () => window.removeEventListener("concilia_config_preview", onPreview)
   }, [esRutaPublica, pathname])
 
   // Actualizar el título de la pestaña al cambiar de ruta o nombre de app

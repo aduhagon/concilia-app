@@ -85,6 +85,38 @@ export default function ConfiguracionPage() {
     }))
   }
 
+  // Aplicar preview en vivo al cambiar colores, tipografía o nombre
+  useEffect(() => {
+    if (!form.color_primario) return
+    const prev = {
+      bg: document.body.style.backgroundColor,
+      font: document.body.style.fontFamily,
+    }
+    // Aplicar al DOM en tiempo real
+    document.body.style.backgroundColor = form.color_fondo ?? prev.bg
+    document.body.style.fontFamily = `"${form.tipografia ?? "Sora"}", system-ui, sans-serif`
+    // Actualizar sessionStorage para que DynamicHeader lo lea
+    const cached = sessionStorage.getItem("concilia_config")
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached)
+        sessionStorage.setItem("concilia_config", JSON.stringify({
+          ...parsed,
+          color_primario: form.color_primario,
+          color_acento: form.color_acento,
+          color_fondo: form.color_fondo,
+          tipografia: form.tipografia,
+          nombre_display: form.nombre_display,
+        }))
+      } catch {}
+    }
+    // Forzar re-render del header disparando un storage event
+    window.dispatchEvent(new Event("concilia_config_preview"))
+    return () => {
+      // No revertir — el usuario quiere ver el preview hasta que guarde o recargue
+    }
+  }, [form.color_primario, form.color_acento, form.color_fondo, form.tipografia, form.nombre_display])
+
   async function subirArchivo(
     file: File,
     tipo: "logo" | "bg",
@@ -140,9 +172,16 @@ export default function ConfiguracionPage() {
     if (error) {
       setResultado({ tipo: "error", msg: "Error al guardar: " + error.message })
     } else {
-      setResultado({ tipo: "ok", msg: "Configuración guardada. Los cambios se aplican al recargar la página." })
-      // Recargar para aplicar cambios
-      setTimeout(() => window.location.reload(), 1500)
+      setResultado({ tipo: "ok", msg: "Configuración guardada. Los cambios ya están aplicados." })
+      // Actualizar sessionStorage con los valores guardados
+      sessionStorage.setItem("concilia_config", JSON.stringify({
+        color_primario: form.color_primario,
+        color_acento: form.color_acento,
+        color_fondo: form.color_fondo,
+        tipografia: form.tipografia,
+        nombre_display: form.nombre_display,
+      }))
+      window.dispatchEvent(new Event("concilia_config_preview"))
     }
     setGuardando(false)
   }
@@ -376,8 +415,14 @@ export default function ConfiguracionPage() {
 
         {/* PANEL DERECHO — Preview */}
         <div className="space-y-4">
-          <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold">
-            Vista previa
+          <div className="flex items-center justify-between">
+            <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold">
+              Vista previa
+            </div>
+            <div className="flex items-center gap-1.5 text-2xs text-ok">
+              <span className="w-1.5 h-1.5 rounded-full bg-ok animate-pulse inline-block" />
+              En vivo
+            </div>
           </div>
 
           {/* Preview login */}

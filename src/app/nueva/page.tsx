@@ -13,6 +13,7 @@ import type {
   SaldosBilaterales, AjusteManual, ClasificacionPendientes, PapelConciliacion,
 } from "@/types"
 import { Upload, Play, Download, AlertCircle, CheckCircle2, FileSpreadsheet, Trash2, Save } from "lucide-react"
+import ProgresoEjecucion, { type EtapaProceso } from "@/components/ProgresoEjecucion"
 import TablaConFiltros from "@/components/TablaConFiltros"
 import EditorSaldos from "@/components/EditorSaldos"
 import EditorAjustes from "@/components/EditorAjustes"
@@ -50,7 +51,10 @@ export default function NuevaConciliacionPage() {
   const [archivoCmp, setArchivoCmp] = useState<File | null>(null)
   const [archivoCont, setArchivoCont] = useState<File | null>(null)
   const [resultado, setResultado] = useState<ResultadoConciliacionConLog | null>(null)
-  const [procesando, setProcesando] = useState(false)
+  const [etapa, setEtapa] = useState<EtapaProceso>("idle")
+  const [filasCompania, setFilasCompania] = useState<number | undefined>(undefined)
+  const [filasContraparte, setFilasContraparte] = useState<number | undefined>(undefined)
+  const procesando = etapa !== "idle" && etapa !== "listo" && etapa !== "error"
   const [error, setError] = useState<string | null>(null)
 
   const toast = useToast()
@@ -173,23 +177,38 @@ export default function NuevaConciliacionPage() {
 
   async function ejecutar() {
     if (!plantilla || !archivoCmp || !archivoCont) return
-    setProcesando(true)
+    setEtapa("leyendo_compania")
     setError(null)
     try {
+      // Etapa 1: leer Excel compañía
       const cmpRaw = await leerExcel(archivoCmp)
-      const contRaw = await leerExcel(archivoCont)
-      // Guardar cantidad de filas para el hash posterior
+      setFilasCompania(cmpRaw.filas.length)
       ;(window as any).__cmpRawFilas = cmpRaw.filas.length
+
+      // Etapa 2: leer Excel contraparte
+      setEtapa("leyendo_contraparte")
+      const contRaw = await leerExcel(archivoCont)
+      setFilasContraparte(contRaw.filas.length)
       ;(window as any).__contRawFilas = contRaw.filas.length
+
+      // Etapa 3: normalizar movimientos
+      setEtapa("normalizando")
+      // Ceder el hilo un tick para que React renderice el cambio de etapa
+      await new Promise(r => setTimeout(r, 0))
       const movsCmp = normalizarCompania(cmpRaw.filas, plantilla.mapeo_compania, "c")
       const movsCont = normalizarContraparte(contRaw.filas, plantilla.mapeo_contraparte, "x")
+
+      // Etapa 4: conciliar
+      setEtapa("conciliando")
+      await new Promise(r => setTimeout(r, 0))
       const r = conciliar([...movsCmp, ...movsCont], plantilla)
+
+      setEtapa("listo")
       setResultado(r)
       setTab("papel")
     } catch (e) {
+      setEtapa("error")
       setError(e instanceof Error ? e.message : "Error desconocido")
-    } finally {
-      setProcesando(false)
     }
   }
 
@@ -609,15 +628,22 @@ export default function NuevaConciliacionPage() {
       )}
 
       {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && (
-        <div className="flex justify-center py-2">
-          <button
-            onClick={ejecutar}
-            disabled={!archivoCmp || !archivoCont || procesando}
-            className="btn btn-primary btn-lg disabled:opacity-50 min-w-[280px]"
-          >
-            <Play size={16} />
-            {procesando ? "Procesando..." : "Ejecutar conciliación"}
-          </button>
+        <div className="flex flex-col items-center gap-4 py-2">
+          {etapa === "idle" || etapa === "listo" || etapa === "error" ? (
+            <button
+              onClick={ejecutar}
+              disabled={!archivoCmp || !archivoCont}
+              className="btn btn-primary btn-lg disabled:opacity-50 min-w-[280px]"
+            >
+              <Play size={16} />
+              {etapa === "listo" ? "Volver a ejecutar" : "Ejecutar conciliación"}
+            </button>
+          ) : null}
+          <ProgresoEjecucion
+            etapa={etapa}
+            filasCompania={filasCompania}
+            filasContraparte={filasContraparte}
+          />
         </div>
       )}
       {plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId && !archivoCmp && !archivoCont && !procesando && (

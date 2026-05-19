@@ -5,7 +5,8 @@ export const dynamic = "force-dynamic"
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase-client"
 import Link from "next/link"
-import { Clock, FileSpreadsheet, ChevronRight, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Building, Plus } from "lucide-react"
+import { Clock, FileSpreadsheet, ChevronRight, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Building, Plus, Search, X } from "lucide-react"
+import { useUser } from "@/lib/user-context"
 
 type ConciliacionRow = {
   id: string
@@ -41,7 +42,6 @@ type SociedadAgrupada = {
 }
 
 function agrupar(items: ConciliacionRow[]): SociedadAgrupada[] {
-  // Primero agrupar por sociedad
   const porSociedad: Record<string, { proveedores: Record<string, { cuentas: Record<string, ConciliacionRow[]> }> }> = {}
 
   for (const c of items) {
@@ -55,7 +55,6 @@ function agrupar(items: ConciliacionRow[]): SociedadAgrupada[] {
     porSociedad[soc].proveedores[prov].cuentas[cuenta].push(c)
   }
 
-  // Convertir a array ordenado
   return Object.entries(porSociedad)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([sociedad_nombre, { proveedores }]) => ({
@@ -82,6 +81,7 @@ function agrupar(items: ConciliacionRow[]): SociedadAgrupada[] {
 }
 
 export default function HistorialPage() {
+  const { usuario } = useUser()
   const [items, setItems] = useState<ConciliacionRow[]>([])
   const [loading, setLoading] = useState(true)
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set())
@@ -138,6 +138,8 @@ export default function HistorialPage() {
     : agrupado
 
   const totalConciliaciones = items.length
+  const hayFiltroActivo = filtro.trim().length > 0
+  const sinResultadosDeFiltro = hayFiltroActivo && filtrado.length === 0
 
   return (
     <div className="px-6 py-6 space-y-6">
@@ -147,7 +149,7 @@ export default function HistorialPage() {
         <div>
           <div className="text-2xs uppercase tracking-[0.2em] text-ink-500 mb-2">Historial</div>
           <h1 className="h-page">Conciliaciones anteriores</h1>
-          {!loading && (
+          {!loading && items.length > 0 && (
             <p className="text-ink-600 mt-1 text-sm">
               {totalConciliaciones} conciliación{totalConciliaciones !== 1 ? "es" : ""} en {agrupado.length} sociedad{agrupado.length !== 1 ? "es" : ""}
             </p>
@@ -158,149 +160,230 @@ export default function HistorialPage() {
         </Link>
       </div>
 
-      {loading ? (
+      {/* Estado: cargando */}
+      {loading && (
         <div className="text-sm text-ink-400 text-center py-8">Cargando…</div>
-      ) : items.length === 0 ? (
-        <div className="card text-center py-12">
-          <FileSpreadsheet size={32} className="mx-auto text-ink-300 mb-3" />
-          <div className="text-base font-semibold">Sin conciliaciones aún</div>
-          <p className="text-sm text-ink-500 mt-1 mb-4">Cuando ejecutes una conciliación va a aparecer acá.</p>
-          <Link href="/nueva" className="btn btn-primary inline-flex">Nueva conciliación</Link>
-        </div>
-      ) : (
+      )}
+
+      {/* Estado: sin conciliaciones (vacío total) */}
+      {!loading && items.length === 0 && (
+        <EmptyState rol={usuario?.rol ?? "operativo"} />
+      )}
+
+      {/* Estado: hay datos */}
+      {!loading && items.length > 0 && (
         <>
           {/* Buscador */}
-          <input
-            value={filtro}
-            onChange={e => setFiltro(e.target.value)}
-            placeholder="Buscar por proveedor o sociedad…"
-            className="input w-full max-w-sm"
-          />
+          <div className="relative w-full max-w-sm">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" />
+            <input
+              value={filtro}
+              onChange={e => setFiltro(e.target.value)}
+              placeholder="Buscar por proveedor o sociedad…"
+              className="input w-full pl-8 pr-8"
+            />
+            {hayFiltroActivo && (
+              <button
+                onClick={() => setFiltro("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-600"
+                aria-label="Limpiar búsqueda"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
 
-          {/* Agrupado por sociedad */}
-          <div className="space-y-6">
-            {filtrado.map(soc => (
-              <div key={soc.sociedad_nombre}>
+          {/* Estado: filtro sin resultados */}
+          {sinResultadosDeFiltro ? (
+            <div className="card text-center py-10">
+              <Search size={24} className="mx-auto text-ink-300 mb-3" />
+              <div className="text-sm font-semibold text-ink-700">
+                Sin resultados para "{filtro}"
+              </div>
+              <p className="text-xs text-ink-500 mt-1 mb-4">
+                Probá con otro nombre de proveedor o sociedad.
+              </p>
+              <button
+                onClick={() => setFiltro("")}
+                className="btn btn-secondary text-xs"
+              >
+                Limpiar búsqueda
+              </button>
+            </div>
+          ) : (
+            /* Lista agrupada */
+            <div className="space-y-6">
+              {filtrado.map(soc => (
+                <div key={soc.sociedad_nombre}>
 
-                {/* Header sociedad */}
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-7 h-7 bg-accent flex items-center justify-center flex-shrink-0">
-                    <Building size={13} className="text-white" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-bold">{soc.sociedad_nombre}</div>
-                    <div className="text-2xs text-ink-400">
-                      {soc.proveedores.length} proveedor{soc.proveedores.length !== 1 ? "es" : ""} ·{" "}
-                      {soc.proveedores.reduce((acc, p) => acc + p.total, 0)} conciliacion{soc.proveedores.reduce((acc, p) => acc + p.total, 0) !== 1 ? "es" : ""}
+                  {/* Header sociedad */}
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-7 h-7 bg-accent flex items-center justify-center flex-shrink-0">
+                      <Building size={13} className="text-white" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-bold">{soc.sociedad_nombre}</div>
+                      <div className="text-2xs text-ink-400">
+                        {soc.proveedores.length} proveedor{soc.proveedores.length !== 1 ? "es" : ""} ·{" "}
+                        {soc.proveedores.reduce((acc, p) => acc + p.total, 0)} conciliacion{soc.proveedores.reduce((acc, p) => acc + p.total, 0) !== 1 ? "es" : ""}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Proveedores de esta sociedad */}
-                <div className="panel divide-y divide-ink-100 ml-0">
-                  {soc.proveedores.map(prov => {
-                    const keyProv = `${soc.sociedad_nombre}__${prov.contraparte_id}`
-                    const expandido = expandidos.has(keyProv)
-                    const todasConcs = prov.cuentas.flatMap(c => c.conciliaciones)
-                    const ultimaDif = todasConcs[0]?.diferencia_final_ars ?? null
-                    const ultimaOk = ultimaDif !== null && Math.abs(ultimaDif) < 1
+                  {/* Proveedores */}
+                  <div className="panel divide-y divide-ink-100 ml-0">
+                    {soc.proveedores.map(prov => {
+                      const keyProv = `${soc.sociedad_nombre}__${prov.contraparte_id}`
+                      const expandido = expandidos.has(keyProv)
+                      const todasConcs = prov.cuentas.flatMap(c => c.conciliaciones)
+                      const ultimaDif = todasConcs[0]?.diferencia_final_ars ?? null
+                      const ultimaOk = ultimaDif !== null && Math.abs(ultimaDif) < 1
 
-                    return (
-                      <div key={keyProv}>
-                        {/* Fila proveedor */}
-                        <button
-                          onClick={() => toggleExpandido(keyProv)}
-                          className="w-full flex items-center px-4 py-3 hover:bg-ink-50 transition-colors text-left"
-                        >
-                          <div className={`w-7 h-7 rounded flex items-center justify-center flex-shrink-0 mr-3 ${ultimaOk ? "bg-ok-light text-ok" : ultimaDif !== null ? "bg-warn-light text-warn" : "bg-ink-100 text-ink-400"}`}>
-                            {ultimaOk ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold">{prov.contraparte_nombre}</div>
-                            <div className="text-2xs text-ink-400 mt-0.5">
-                              {prov.total} conciliación{prov.total !== 1 ? "es" : ""} ·{" "}
-                              {prov.cuentas.map(c => c.cuenta_interna).filter(Boolean).join(", ")}
+                      return (
+                        <div key={keyProv}>
+                          {/* Fila proveedor */}
+                          <button
+                            onClick={() => toggleExpandido(keyProv)}
+                            className="w-full flex items-center px-4 py-3 hover:bg-ink-50 transition-colors text-left"
+                          >
+                            <div className={`w-7 h-7 rounded flex items-center justify-center flex-shrink-0 mr-3 ${ultimaOk ? "bg-ok-light text-ok" : ultimaDif !== null ? "bg-warn-light text-warn" : "bg-ink-100 text-ink-400"}`}>
+                              {ultimaOk ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
                             </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            {ultimaDif !== null && (
-                              <div className="text-right">
-                                <div className="text-2xs text-ink-400">Última diferencia</div>
-                                <div className={`text-xs font-mono font-semibold ${ultimaOk ? "text-ok" : "text-warn"}`}>
-                                  {ultimaOk ? "✓ $0" : `$${Math.abs(ultimaDif).toLocaleString("es-AR")}`}
-                                </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-semibold">{prov.contraparte_nombre}</div>
+                              <div className="text-2xs text-ink-400 mt-0.5">
+                                {prov.total} conciliación{prov.total !== 1 ? "es" : ""} ·{" "}
+                                {prov.cuentas.map(c => c.cuenta_interna).filter(Boolean).join(", ")}
                               </div>
-                            )}
-                            {expandido
-                              ? <ChevronUp size={15} className="text-ink-400 flex-shrink-0" />
-                              : <ChevronDown size={15} className="text-ink-400 flex-shrink-0" />
-                            }
-                          </div>
-                        </button>
-
-                        {/* Cuentas expandidas */}
-                        {expandido && (
-                          <div className="bg-ink-50 border-t border-ink-100">
-                            {prov.cuentas.map(cuenta => (
-                              <div key={cuenta.cuenta_proveedor_id ?? "sin-cuenta"} className="px-4 py-2">
-
-                                {/* Sub-header cuenta */}
-                                {cuenta.cuenta_interna && (
-                                  <div className="text-2xs font-semibold text-ink-500 uppercase tracking-wider mb-2 pl-10">
-                                    Cuenta {cuenta.cuenta_interna}
+                            </div>
+                            <div className="flex items-center gap-3">
+                              {ultimaDif !== null && (
+                                <div className="text-right">
+                                  <div className="text-2xs text-ink-400">Última diferencia</div>
+                                  <div className={`text-xs font-mono font-semibold ${ultimaOk ? "text-ok" : "text-warn"}`}>
+                                    {ultimaOk ? "✓ $0" : `$${Math.abs(ultimaDif).toLocaleString("es-AR")}`}
                                   </div>
-                                )}
-
-                                {/* Conciliaciones de esta cuenta */}
-                                <div className="space-y-1 pl-10">
-                                  {cuenta.conciliaciones.map(c => {
-                                    const ok = c.diferencia_final_ars !== null && Math.abs(c.diferencia_final_ars) < 1
-                                    return (
-                                      <Link
-                                        key={c.id}
-                                        href={`/conciliaciones/${c.id}`}
-                                        className="flex items-center justify-between py-2 px-3 bg-white border border-ink-200 hover:border-accent hover:bg-accent-light/10 transition-colors group rounded"
-                                      >
-                                        <div className="flex items-center gap-3">
-                                          <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${ok ? "bg-ok-light text-ok" : "bg-warn-light text-warn"}`}>
-                                            {ok ? <CheckCircle2 size={11} /> : <AlertCircle size={11} />}
-                                          </div>
-                                          <div>
-                                            <div className="text-xs font-semibold">
-                                              {c.periodo_label ?? new Date(c.created_at).toLocaleDateString("es-AR", { month: "long", year: "numeric" })}
-                                            </div>
-                                            <div className="text-2xs text-ink-400 flex items-center gap-1 mt-0.5">
-                                              <Clock size={10} />
-                                              {new Date(c.created_at).toLocaleString("es-AR")}
-                                            </div>
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                          <div className="text-right">
-                                            <div className="text-2xs text-ink-400">Diferencia</div>
-                                            <div className={`text-xs font-mono font-semibold ${ok ? "text-ok" : "text-warn"}`}>
-                                              {ok ? "✓ $0" : `$${Math.abs(c.diferencia_final_ars ?? 0).toLocaleString("es-AR")}`}
-                                            </div>
-                                          </div>
-                                          <ChevronRight size={13} className="text-ink-300 group-hover:text-accent transition-colors flex-shrink-0" />
-                                        </div>
-                                      </Link>
-                                    )
-                                  })}
                                 </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                              )}
+                              {expandido
+                                ? <ChevronUp size={15} className="text-ink-400 flex-shrink-0" />
+                                : <ChevronDown size={15} className="text-ink-400 flex-shrink-0" />
+                              }
+                            </div>
+                          </button>
+
+                          {/* Cuentas expandidas */}
+                          {expandido && (
+                            <div className="bg-ink-50 border-t border-ink-100">
+                              {prov.cuentas.map(cuenta => (
+                                <div key={cuenta.cuenta_proveedor_id ?? "sin-cuenta"} className="px-4 py-2">
+                                  {cuenta.cuenta_interna && (
+                                    <div className="text-2xs font-semibold text-ink-500 uppercase tracking-wider mb-2 pl-10">
+                                      Cuenta {cuenta.cuenta_interna}
+                                    </div>
+                                  )}
+                                  <div className="space-y-1 pl-10">
+                                    {cuenta.conciliaciones.map(c => {
+                                      const ok = c.diferencia_final_ars !== null && Math.abs(c.diferencia_final_ars) < 1
+                                      return (
+                                        <Link
+                                          key={c.id}
+                                          href={`/conciliaciones/${c.id}`}
+                                          className="flex items-center justify-between py-2 px-3 bg-white border border-ink-200 hover:border-accent hover:bg-accent-light/10 transition-colors group rounded"
+                                        >
+                                          <div className="flex items-center gap-3">
+                                            <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${ok ? "bg-ok-light text-ok" : "bg-warn-light text-warn"}`}>
+                                              {ok ? <CheckCircle2 size={11} /> : <AlertCircle size={11} />}
+                                            </div>
+                                            <div>
+                                              <div className="text-xs font-semibold">
+                                                {c.periodo_label ?? new Date(c.created_at).toLocaleDateString("es-AR", { month: "long", year: "numeric" })}
+                                              </div>
+                                              <div className="text-2xs text-ink-400 flex items-center gap-1 mt-0.5">
+                                                <Clock size={10} />
+                                                {new Date(c.created_at).toLocaleString("es-AR")}
+                                              </div>
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center gap-3">
+                                            <div className="text-right">
+                                              <div className="text-2xs text-ink-400">Diferencia</div>
+                                              <div className={`text-xs font-mono font-semibold ${ok ? "text-ok" : "text-warn"}`}>
+                                                {ok ? "✓ $0" : `$${Math.abs(c.diferencia_final_ars ?? 0).toLocaleString("es-AR")}`}
+                                              </div>
+                                            </div>
+                                            <ChevronRight size={13} className="text-ink-300 group-hover:text-accent transition-colors flex-shrink-0" />
+                                          </div>
+                                        </Link>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </>
       )}
+    </div>
+  )
+}
+
+// Empty state diferenciado por rol
+function EmptyState({ rol }: { rol: string }) {
+  if (rol === "operativo") {
+    return (
+      <div className="card text-center py-14 max-w-md mx-auto">
+        <FileSpreadsheet size={32} className="mx-auto text-ink-300 mb-3" />
+        <div className="text-base font-semibold">Todavía no conciliaste ninguna cuenta</div>
+        <p className="text-sm text-ink-500 mt-2 mb-5 leading-relaxed">
+          Cuando ejecutes tu primera conciliación va a aparecer acá con todo el historial.
+        </p>
+        <Link href="/nueva" className="btn btn-primary inline-flex">
+          <Plus size={14} /> Crear primera conciliación
+        </Link>
+      </div>
+    )
+  }
+
+  if (rol === "supervisor") {
+    return (
+      <div className="card text-center py-14 max-w-md mx-auto">
+        <FileSpreadsheet size={32} className="mx-auto text-ink-300 mb-3" />
+        <div className="text-base font-semibold">Sin conciliaciones registradas</div>
+        <p className="text-sm text-ink-500 mt-2 mb-5 leading-relaxed">
+          El historial aparece acá una vez que los operativos empiecen a ejecutar conciliaciones.
+        </p>
+        <Link href="/supervisor" className="btn btn-secondary inline-flex">
+          Ver tablero de seguimiento →
+        </Link>
+      </div>
+    )
+  }
+
+  // admin
+  return (
+    <div className="card text-center py-14 max-w-md mx-auto">
+      <FileSpreadsheet size={32} className="mx-auto text-ink-300 mb-3" />
+      <div className="text-base font-semibold">Sin conciliaciones aún</div>
+      <p className="text-sm text-ink-500 mt-2 mb-5 leading-relaxed">
+        Para empezar necesitás tener cuentas y usuarios operativos configurados.
+      </p>
+      <div className="flex items-center gap-2 justify-center flex-wrap">
+        <Link href="/plantillas" className="btn btn-primary inline-flex">
+          Configurar cuentas
+        </Link>
+        <Link href="/usuarios" className="btn btn-secondary inline-flex">
+          Gestionar usuarios
+        </Link>
+      </div>
     </div>
   )
 }

@@ -28,6 +28,34 @@ const DEFAULT: Config = {
 // Rutas donde NO se muestra el header
 const RUTAS_SIN_HEADER = ["/login", "/activar", "/cambiar-password"]
 
+// Mapa de rutas a títulos de pestaña.
+// exact: true = coincidencia exacta. Por defecto usa startsWith.
+const ROUTE_TITLES: Array<{ match: string; exact?: boolean; title: string }> = [
+  { match: "/",                     exact: true, title: "Inicio" },
+  { match: "/nueva",                exact: true, title: "Nueva conciliación" },
+  { match: "/conciliaciones",       exact: true, title: "Historial" },
+  { match: "/conciliaciones/",      title: "Detalle de conciliación" },
+  { match: "/supervisor",           title: "Tablero de supervisión" },
+  { match: "/plantillas",           exact: true, title: "Cuentas y plantillas" },
+  { match: "/plantillas/",          title: "Editar plantilla" },
+  { match: "/usuarios",             title: "Usuarios" },
+  { match: "/sociedades",           title: "Sociedades" },
+  { match: "/tipos-cambio",         title: "Tipos de cambio" },
+  { match: "/historial-categorias", title: "Historial de categorías" },
+  { match: "/configuracion",        title: "Configuración" },
+  { match: "/auditoria",            title: "Auditoría" },
+]
+
+function getTitleForPath(pathname: string, appName: string): string {
+  for (const entry of ROUTE_TITLES) {
+    const matches = entry.exact
+      ? pathname === entry.match
+      : pathname.startsWith(entry.match)
+    if (matches) return `${entry.title} — ${appName}`
+  }
+  return appName
+}
+
 // Definición del menú con permisos por rol.
 // roles: undefined = todos los roles autenticados lo ven.
 type NavItem = {
@@ -57,8 +85,8 @@ export default function DynamicHeader() {
 
   // Filtrar ítems según el rol del usuario
   const itemsVisibles = NAV_ITEMS.filter(item => {
-    if (!item.roles) return true                          // visible para todos
-    if (!usuario) return false                            // sin sesión: ocultar ítems restringidos
+    if (!item.roles) return true
+    if (!usuario) return false
     return item.roles.includes(usuario.rol)
   })
 
@@ -99,6 +127,12 @@ export default function DynamicHeader() {
     }
     cargar()
   }, [esRutaPublica, pathname])
+
+  // Actualizar el título de la pestaña al cambiar de ruta o nombre de app
+  useEffect(() => {
+    const appName = cfg.nombre_display ?? "Concilia"
+    document.title = getTitleForPath(pathname, appName)
+  }, [pathname, cfg.nombre_display])
 
   if (esRutaPublica) return null
 
@@ -145,7 +179,6 @@ export default function DynamicHeader() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Ocultar "Nueva conciliación" para roles sin acceso a /nueva */}
           {usuario && (usuario.rol === "admin" || usuario.rol === "supervisor" || usuario.rol === "operativo") && (
             <Link
               href="/nueva"

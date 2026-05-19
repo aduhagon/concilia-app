@@ -6,7 +6,10 @@ import DynamicHeader from "@/components/DynamicHeader"
 import { UserProvider } from "@/lib/user-context"
 
 export const metadata: Metadata = {
-  title: "Concilia",
+  title: {
+    template: "%s — Concilia",
+    default: "Concilia",
+  },
   description: "Conciliación de cuentas corrientes",
 }
 

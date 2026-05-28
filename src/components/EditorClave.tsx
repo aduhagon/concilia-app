@@ -81,19 +81,25 @@ export default function EditorClave({
   // 1. Se pasó contraparteId
   // 2. El constructor actual tiene al menos una operación
   // 3. Se pasó el constructor del otro lado (para poder comparar ambos)
+  const otroLadoTieneOps =
+    !!constructorOtroLado &&
+    constructorOtroLado.tipo === "visual" &&
+    constructorOtroLado.operaciones.length > 0
+
   const mostrarProbarClave =
     !!contraparteId &&
     ops.length > 0 &&
-    !!constructorOtroLado &&
-    (constructorOtroLado.operaciones?.length ?? 0) > 0
+    otroLadoTieneOps
 
-  // Determinamos qué constructor es compañía y cuál contraparte según el label
+  const otroLadoVisual =
+    constructorOtroLado?.tipo === "visual" ? constructorOtroLado : undefined
+
   const esCompania = label.toLowerCase().includes("compañ") || label.toLowerCase().includes("compania")
   const constructorCompania = esCompania
     ? { tipo: "visual" as const, operaciones: ops }
-    : constructorOtroLado!
+    : otroLadoVisual
   const constructorContraparte = esCompania
-    ? constructorOtroLado!
+    ? otroLadoVisual
     : { tipo: "visual" as const, operaciones: ops }
 
   return (
@@ -173,7 +179,7 @@ export default function EditorClave({
           )}
 
           {/* Panel "Probar clave" contra movimientos reales */}
-          {mostrarProbarClave && (
+          {mostrarProbarClave && constructorCompania && constructorContraparte && (
             <ProbarClavePanel
               contraparteId={contraparteId!}
               constructorCompania={constructorCompania}

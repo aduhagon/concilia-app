@@ -33,7 +33,6 @@ export default function EditarPlantillaPage() {
   const [contraparte, setContraparte] = useState<{ nombre: string } | null>(null)
   const [plantilla, setPlantilla] = useState<PlantillaProveedor | null>(null)
 
-  // muestras de archivos cargados (para preview de claves y selectores de columna)
   const [muestraCmp, setMuestraCmp] = useState<{ columnas: string[]; filas: Record<string, unknown>[] }>({ columnas: [], filas: [] })
   const [muestraCont, setMuestraCont] = useState<{ columnas: string[]; filas: Record<string, unknown>[] }>({ columnas: [], filas: [] })
 
@@ -77,7 +76,6 @@ export default function EditarPlantillaPage() {
   async function cargarHistorial() {
     setCargandoHist(true)
 
-    // Obtener plantilla_id de forma robusta
     let plantillaId = plantilla?.id
     if (!plantillaId) {
       const { data: p } = await supabase
@@ -107,7 +105,6 @@ export default function EditarPlantillaPage() {
       return
     }
 
-    // Resolver nombres de usuarios
     const userIds = Array.from(new Set(data.map(h => h.usuario_id).filter(Boolean) as string[]))
     const nombresPorId: Record<string, string> = {}
     if (userIds.length > 0) {
@@ -164,7 +161,6 @@ export default function EditarPlantillaPage() {
     if (!plantilla) return
     setGuardando(true)
 
-    // Leer versión anterior para comparar
     const { data: anterior } = await supabase
       .from("plantillas_proveedor")
       .select("mapeo_compania, mapeo_contraparte, reglas_tipos, tipos_sin_contraparte_compania, tipos_sin_contraparte_externa, config")
@@ -190,12 +186,10 @@ export default function EditarPlantillaPage() {
       return
     }
 
-    // Registrar en historial qué cambió
     if (anterior) {
       const { data: { user } } = await supabase.auth.getUser()
       const registros = []
 
-      // Detectar cambios en mapeo
       if (JSON.stringify(anterior.mapeo_compania) !== JSON.stringify(plantilla.mapeo_compania)) {
         registros.push({
           plantilla_id: plantilla.id,
@@ -217,7 +211,6 @@ export default function EditarPlantillaPage() {
         })
       }
 
-      // Detectar reglas agregadas/eliminadas
       const reglasAnt = (anterior.reglas_tipos ?? []) as ReglaTipo[]
       const reglasNew = plantilla.reglas_tipos
       const idsAnt = new Set(reglasAnt.map((r: ReglaTipo) => r.id))
@@ -248,7 +241,6 @@ export default function EditarPlantillaPage() {
         }
       }
 
-      // Detectar tipos sin contraparte modificados
       if (JSON.stringify(anterior.tipos_sin_contraparte_compania) !== JSON.stringify(plantilla.tipos_sin_contraparte_compania) ||
           JSON.stringify(anterior.tipos_sin_contraparte_externa) !== JSON.stringify(plantilla.tipos_sin_contraparte_externa)) {
         registros.push({
@@ -262,14 +254,12 @@ export default function EditarPlantillaPage() {
       }
 
       if (registros.length > 0) {
-
-      // Auditoría: plantilla modificada
-      await registrar(supabase, {
-        accion: "plantilla_modificada",
-        tabla_afectada: "plantillas_proveedor",
-        registro_id: plantilla.id,
-        observacion: `${registros.length} campo(s) modificado(s)`,
-      })
+        await registrar(supabase, {
+          accion: "plantilla_modificada",
+          tabla_afectada: "plantillas_proveedor",
+          registro_id: plantilla.id,
+          observacion: `${registros.length} campo(s) modificado(s)`,
+        })
         await supabase.from("plantillas_historial").insert(registros)
       }
     }
@@ -356,10 +346,7 @@ export default function EditarPlantillaPage() {
                           </span>
                         )}
                       </div>
-
-                      {/* Diff visual */}
                       <DiffHistorial accion={h.accion} campo={h.campo_modificado} anterior={h.valor_anterior} nuevo={h.valor_nuevo} />
-
                       <div className="text-2xs text-ink-400 flex items-center gap-1">
                         <Clock size={10} />
                         {new Date(h.created_at).toLocaleString("es-AR")}
@@ -465,9 +452,7 @@ export default function EditarPlantillaPage() {
                 onChange={(parcial) => actualizarRegla(originalIdx, parcial)}
                 onDelete={() => eliminarRegla(originalIdx)}
                 onSubirPrioridad={esPrimero ? undefined : () => {
-                  // Asignar prioridades secuenciales 10, 20, 30... y swap con el anterior
                   const conPrio = reglasOrdenadas.map((r, i) => ({ ...r, prioridad: (i + 1) * 10 }))
-                  // Swap
                   const tmp = conPrio[posicionVisible].prioridad!
                   conPrio[posicionVisible].prioridad = conPrio[posicionVisible - 1].prioridad
                   conPrio[posicionVisible - 1].prioridad = tmp
@@ -486,12 +471,13 @@ export default function EditarPlantillaPage() {
                 filaMuestraCont={muestraCont.filas[1]}
                 tiposCmpEnArchivo={tiposUnicos(muestraCmp.filas, plantilla.mapeo_compania.tipo)}
                 tiposContEnArchivo={tiposUnicos(muestraCont.filas, plantilla.mapeo_contraparte.tipo)}
+                contraparteId={contraparteId}
               />
             )
           })}
       </section>
 
-      {/* Tipos sin contraparte (ajustes propios) */}
+      {/* Tipos sin contraparte */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <ListaSimple
           titulo="Tipos compañía SIN contraparte"
@@ -580,6 +566,7 @@ function ReglaCard({
   onSubirPrioridad, onBajarPrioridad,
   columnasCmp, columnasCont, filaMuestraCmp, filaMuestraCont,
   tiposCmpEnArchivo, tiposContEnArchivo,
+  contraparteId,
 }: {
   regla: ReglaTipo
   posicion: number
@@ -596,11 +583,11 @@ function ReglaCard({
   filaMuestraCont?: Record<string, unknown>
   tiposCmpEnArchivo: string[]
   tiposContEnArchivo: string[]
+  contraparteId: string
 }) {
   return (
     <div className="card-tight">
       <div className="flex items-center justify-between gap-3">
-        {/* Controles de prioridad */}
         <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
           <button
             onClick={onSubirPrioridad}
@@ -685,7 +672,7 @@ function ReglaCard({
             </div>
           </div>
 
-          {/* Constructor de claves */}
+          {/* Constructor de claves — con contraparteId para "Probar clave" */}
           {regla.metodo_match === "clave" && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <EditorClave
@@ -694,6 +681,8 @@ function ReglaCard({
                 columnasDisponibles={columnasCmp}
                 filaMuestra={filaMuestraCmp}
                 onChange={(c) => onChange({ clave_compania: c })}
+                contraparteId={contraparteId}
+                constructorOtroLado={regla.clave_contraparte}
               />
               <EditorClave
                 label="Clave contraparte"
@@ -701,6 +690,8 @@ function ReglaCard({
                 columnasDisponibles={columnasCont}
                 filaMuestra={filaMuestraCont}
                 onChange={(c) => onChange({ clave_contraparte: c })}
+                contraparteId={contraparteId}
+                constructorOtroLado={regla.clave_compania}
               />
             </div>
           )}
@@ -823,7 +814,6 @@ function DiffHistorial({ accion, campo, anterior, nuevo }: {
   anterior: any
   nuevo: any
 }) {
-  // Tipos sin contraparte: comparar listas
   if (campo === "tipos_sin_contraparte" && anterior && nuevo) {
     const setAntCmp = new Set<string>(anterior.compania ?? [])
     const setNewCmp = new Set<string>(nuevo.compania ?? [])
@@ -869,7 +859,6 @@ function DiffHistorial({ accion, campo, anterior, nuevo }: {
     )
   }
 
-  // Regla agregada/eliminada
   if (accion === "regla_agregada" && nuevo) {
     return (
       <div className="text-2xs pl-2 border-l-2 border-ok/30 flex items-center gap-1.5 flex-wrap">
@@ -889,7 +878,6 @@ function DiffHistorial({ accion, campo, anterior, nuevo }: {
     )
   }
 
-  // Mapeos: comparar campo por campo
   if ((campo === "mapeo_compania" || campo === "mapeo_contraparte") && anterior && nuevo) {
     const cambios: { campo: string; antes: string; despues: string }[] = []
     const keys = new Set([...Object.keys(anterior), ...Object.keys(nuevo)])

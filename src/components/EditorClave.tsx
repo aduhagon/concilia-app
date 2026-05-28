@@ -86,15 +86,18 @@ export default function EditorClave({
     constructorOtroLado.tipo === "visual" &&
     constructorOtroLado.operaciones.length > 0
 
+  const esCompania = label.toLowerCase().includes("compañ") || label.toLowerCase().includes("compania")
+
+  // El panel "Probar clave" solo se muestra en el lado compañía para evitar duplicados
   const mostrarProbarClave =
     !!contraparteId &&
     ops.length > 0 &&
-    otroLadoTieneOps
+    otroLadoTieneOps &&
+    esCompania
 
   const otroLadoVisual =
     constructorOtroLado?.tipo === "visual" ? constructorOtroLado : undefined
 
-  const esCompania = label.toLowerCase().includes("compañ") || label.toLowerCase().includes("compania")
   const constructorCompania = esCompania
     ? { tipo: "visual" as const, operaciones: ops }
     : otroLadoVisual

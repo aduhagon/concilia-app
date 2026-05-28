@@ -6,44 +6,22 @@
 // contra movimientos reales. Se monta dentro del EditorClave cuando el
 // metodo_match de la regla es 'clave'.
 //
-// Props:
-//   contraparteId       — UUID de la contraparte
-//   constructorCompania — ConstructorClave del lado compania (en edicion)
-//   constructorContraparte — ConstructorClave del lado contraparte (en edicion)
-//   className           — opcional, clase extra para el wrapper
+// Uso:
+//   <ProbarClavePanel
+//     contraparteId={contraparteId}
+//     constructorCompania={regla.constructor_compania}
+//     constructorContraparte={regla.constructor_contraparte}
+//   />
 
 import { useState } from 'react'
 import { FlaskConical, CheckCircle2, XCircle, AlertCircle, Loader2 } from 'lucide-react'
 
-// ── Tipos locales (duplicados del lib para no importar server-only en cliente) ─
+// Importamos el tipo desde el proyecto — igual que hace EditorClave —
+// para no redefinirlo localmente y mantenernos sincronizados.
+import type { ConstructorClave } from '@/types'
+import type { ResultadoProbarClave, ResultadoPrueba } from '@/lib/probar-clave'
 
-interface OperacionClave {
-  op: 'campo' | 'literal' | 'ultimos' | 'primeros' | 'regex' | 'limpiar'
-  valor?: string
-  n?: number
-  patron?: string
-  quitar?: string[]
-}
-
-interface ConstructorClave {
-  operaciones: OperacionClave[]
-}
-
-interface ResultadoPrueba {
-  comprobante_raw: string
-  fecha: string
-  tipo_original: string
-  importe_ars: number | null
-  clave_calculada: string | null
-  error?: string
-}
-
-interface ResultadoProbarClave {
-  compania: ResultadoPrueba[]
-  contraparte: ResultadoPrueba[]
-  total_compania: number
-  total_contraparte: number
-}
+// ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
   contraparteId: string
@@ -66,16 +44,6 @@ function formatFecha(iso: string) {
   }
 }
 
-function formatImporte(n: number | null) {
-  if (n == null) return '—'
-  return new Intl.NumberFormat('es-AR', {
-    style: 'currency',
-    currency: 'ARS',
-    maximumFractionDigits: 0,
-  }).format(n)
-}
-
-// Cuenta cuantas claves de compania coinciden con alguna de contraparte
 function calcularCoincidencias(
   compania: ResultadoPrueba[],
   contraparte: ResultadoPrueba[]
@@ -90,7 +58,7 @@ function calcularCoincidencias(
   ).length
 }
 
-// ── Componente ────────────────────────────────────────────────────────────────
+// ── Componente principal ──────────────────────────────────────────────────────
 
 export default function ProbarClavePanel({
   contraparteId,
@@ -127,8 +95,9 @@ export default function ProbarClavePanel({
       const data: ResultadoProbarClave = await res.json()
       setResultado(data)
       setEstado('ok')
-    } catch (e: any) {
-      setMensajeError(e?.message ?? 'Error desconocido')
+    } catch (e: unknown) {
+      const mensaje = e instanceof Error ? e.message : 'Error desconocido'
+      setMensajeError(mensaje)
       setEstado('error')
     }
   }
@@ -149,7 +118,7 @@ export default function ProbarClavePanel({
 
   return (
     <div className={`rounded-lg border border-border bg-card ${className}`}>
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2 text-sm font-medium text-foreground">
           <FlaskConical size={16} className="text-muted-foreground" />
@@ -174,16 +143,17 @@ export default function ProbarClavePanel({
         </button>
       </div>
 
-      {/* ── Estado idle ── */}
+      {/* Estado idle */}
       {estado === 'idle' && (
         <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-          Hace click en <span className="font-medium text-foreground">Probar clave</span> para
-          ver cómo quedan las claves calculadas sobre los últimos 20 comprobantes reales de cada
-          lado.
+          Hace click en{' '}
+          <span className="font-medium text-foreground">Probar clave</span> para ver
+          cómo quedan las claves calculadas sobre los últimos 20 comprobantes reales de
+          cada lado.
         </div>
       )}
 
-      {/* ── Error ── */}
+      {/* Error */}
       {estado === 'error' && (
         <div className="flex items-start gap-3 px-4 py-4 text-sm text-destructive">
           <XCircle size={16} className="mt-0.5 shrink-0" />
@@ -191,21 +161,21 @@ export default function ProbarClavePanel({
         </div>
       )}
 
-      {/* ── Sin movimientos previos ── */}
+      {/* Sin movimientos previos */}
       {sinMovimientos && (
         <div className="flex items-start gap-3 px-4 py-4 text-sm text-muted-foreground">
           <AlertCircle size={16} className="mt-0.5 shrink-0 text-yellow-500" />
           <span>
-            Esta contraparte no tiene conciliaciones previas con movimientos cargados. La clave se
-            podrá verificar una vez que se ejecute la primera conciliación.
+            Esta contraparte no tiene conciliaciones previas con movimientos cargados.
+            La clave se podrá verificar una vez que se ejecute la primera conciliación.
           </span>
         </div>
       )}
 
-      {/* ── Resultado ── */}
+      {/* Resultado */}
       {estado === 'ok' && resultado && !sinMovimientos && (
         <div className="px-4 py-4 space-y-4">
-          {/* Resumen de coincidencias */}
+          {/* Resumen */}
           <div className="flex items-center gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5">
             {pctCoincidencia !== null && pctCoincidencia >= 80 ? (
               <CheckCircle2 size={16} className="text-green-500 shrink-0" />
@@ -218,37 +188,50 @@ export default function ProbarClavePanel({
               </span>{' '}
               claves de compañía coinciden con contraparte
               {pctCoincidencia !== null && (
-                <span className="ml-1 text-muted-foreground">({pctCoincidencia}%)</span>
+                <span className="ml-1 text-muted-foreground">
+                  ({pctCoincidencia}%)
+                </span>
               )}
             </span>
           </div>
 
           {/* Tablas lado a lado */}
           <div className="grid grid-cols-2 gap-4">
-            {/* Compañia */}
             <div>
               <p className="text-xs font-medium text-muted-foreground mb-1.5 uppercase tracking-wide">
                 Compañía ({resultado.total_compania})
               </p>
-              <TablaClaves filas={resultado.compania} claveSet={
-                new Set(resultado.contraparte.map(r => r.clave_calculada ?? '').filter(Boolean))
-              } />
+              <TablaClaves
+                filas={resultado.compania}
+                claveSet={
+                  new Set(
+                    resultado.contraparte
+                      .map((r) => r.clave_calculada ?? '')
+                      .filter(Boolean)
+                  )
+                }
+              />
             </div>
-
-            {/* Contraparte */}
             <div>
               <p className="text-xs font-medium text-muted-foreground mb-1.5 uppercase tracking-wide">
                 Contraparte ({resultado.total_contraparte})
               </p>
-              <TablaClaves filas={resultado.contraparte} claveSet={
-                new Set(resultado.compania.map(r => r.clave_calculada ?? '').filter(Boolean))
-              } />
+              <TablaClaves
+                filas={resultado.contraparte}
+                claveSet={
+                  new Set(
+                    resultado.compania
+                      .map((r) => r.clave_calculada ?? '')
+                      .filter(Boolean)
+                  )
+                }
+              />
             </div>
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Mostrando los últimos {Math.max(resultado.total_compania, resultado.total_contraparte)} movimientos
-            con comprobante. Las claves resaltadas en verde aparecen en ambos lados.
+            Últimos {Math.max(resultado.total_compania, resultado.total_contraparte)}{' '}
+            movimientos con comprobante. Claves en verde aparecen en ambos lados.
           </p>
         </div>
       )}
@@ -278,13 +261,18 @@ function TablaClaves({
       <table className="w-full">
         <thead>
           <tr className="bg-muted/60 border-b border-border">
-            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">Comprobante</th>
-            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">Clave</th>
+            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">
+              Comprobante
+            </th>
+            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">
+              Clave
+            </th>
           </tr>
         </thead>
         <tbody>
           {filas.map((fila, i) => {
-            const coincide = !!fila.clave_calculada && claveSet.has(fila.clave_calculada)
+            const coincide =
+              !!fila.clave_calculada && claveSet.has(fila.clave_calculada)
             const tieneError = !!fila.error
             return (
               <tr

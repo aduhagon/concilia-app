@@ -6,19 +6,12 @@
 import { createClient } from '@supabase/supabase-js'
 import { construirClave } from './constructor-clave'
 
-// ── Tipos ─────────────────────────────────────────────────────────────────────
+// Importamos el tipo directamente desde el proyecto para no redefinirlo y
+// evitar desincronizacion con la definicion real de ConstructorClave.
+// Si los tipos estan en src/types/index.ts ajustar el path segun corresponda.
+import type { ConstructorClave } from '@/types'
 
-export interface OperacionClave {
-  op: 'campo' | 'literal' | 'ultimos' | 'primeros' | 'regex' | 'limpiar'
-  valor?: string
-  n?: number
-  patron?: string
-  quitar?: string[]
-}
-
-export interface ConstructorClave {
-  operaciones: OperacionClave[]
-}
+// ── Tipos propios de este modulo ──────────────────────────────────────────────
 
 export interface ResultadoPrueba {
   comprobante_raw: string
@@ -40,10 +33,10 @@ export interface ResultadoProbarClave {
 
 /**
  * Ejecuta los constructores de clave sobre los movimientos reales de la contraparte.
- * Toma los ultimos 20 movimientos de cada lado (por fecha descendente) de la ultima
+ * Toma los ultimos N movimientos de cada lado (por fecha descendente) de la ultima
  * conciliacion que tenga movimientos cargados para esa contraparte.
  *
- * Si no hay movimientos previos, devuelve arrays vacios con un mensaje explicativo.
+ * Si no hay movimientos previos, devuelve arrays vacios (sin lanzar error).
  */
 export async function probarClave(
   contraparteId: string,
@@ -65,7 +58,6 @@ export async function probarClave(
     .single()
 
   if (errConc || !conciliacion) {
-    // No hay conciliaciones previas — devolver vacio con indicacion
     return {
       compania: [],
       contraparte: [],
@@ -74,7 +66,7 @@ export async function probarClave(
     }
   }
 
-  // Traer movimientos de cada lado
+  // Traer movimientos de cada lado en paralelo
   const [resCompania, resContraparte] = await Promise.all([
     supabase
       .from('movimientos')
@@ -107,8 +99,10 @@ export async function probarClave(
 
     return movimientos.map((mov) => {
       try {
+        // construirClave espera un MovimientoNorm; pasamos un objeto minimo con
+        // los campos que usan las operaciones de tipo 'campo'.
         const clave = construirClave(
-          { comprobante_raw: mov.comprobante_raw } as any,
+          { comprobante_raw: mov.comprobante_raw } as Parameters<typeof construirClave>[0],
           constructor
         )
         return {
@@ -118,14 +112,15 @@ export async function probarClave(
           importe_ars: mov.importe_ars,
           clave_calculada: clave ?? '',
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
+        const mensaje = e instanceof Error ? e.message : 'Error al calcular clave'
         return {
           comprobante_raw: mov.comprobante_raw,
           fecha: mov.fecha,
           tipo_original: mov.tipo_original,
           importe_ars: mov.importe_ars,
           clave_calculada: null,
-          error: e?.message ?? 'Error al calcular clave',
+          error: mensaje,
         }
       }
     })

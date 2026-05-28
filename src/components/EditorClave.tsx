@@ -3,6 +3,7 @@ import type { ConstructorClave, OperacionClave } from "@/types"
 import { Plus, X, GripVertical, Code } from "lucide-react"
 import { previewClave } from "@/lib/constructor-clave"
 import { useState } from "react"
+import ProbarClavePanel from "@/components/ProbarClavePanel"
 
 type Props = {
   label: string
@@ -10,6 +11,10 @@ type Props = {
   columnasDisponibles: string[]
   filaMuestra?: Record<string, unknown>
   onChange: (c: ConstructorClave) => void
+  // Nuevo: opcional. Si se pasa, aparece el botón "Probar clave".
+  // Requiere que el otro lado también esté configurado.
+  contraparteId?: string
+  constructorOtroLado?: ConstructorClave
 }
 
 const TIPOS_OP: { value: OperacionClave["op"]; label: string; help: string }[] = [
@@ -27,6 +32,8 @@ export default function EditorClave({
   columnasDisponibles,
   filaMuestra,
   onChange,
+  contraparteId,
+  constructorOtroLado,
 }: Props) {
   const [modo, setModo] = useState<"visual" | "formula">(constructor?.tipo ?? "visual")
   const ops: OperacionClave[] = constructor?.tipo === "visual" ? constructor.operaciones : []
@@ -65,10 +72,29 @@ export default function EditorClave({
     actualizarOps(c)
   }
 
-  // Preview
+  // Preview con la fila muestra local (ya existía)
   const preview = filaMuestra
     ? previewClave(filaMuestra, { tipo: "visual", operaciones: ops })
     : { resultado: "", pasos: [] }
+
+  // El panel de prueba solo aparece si:
+  // 1. Se pasó contraparteId
+  // 2. El constructor actual tiene al menos una operación
+  // 3. Se pasó el constructor del otro lado (para poder comparar ambos)
+  const mostrarProbarClave =
+    !!contraparteId &&
+    ops.length > 0 &&
+    !!constructorOtroLado &&
+    (constructorOtroLado.operaciones?.length ?? 0) > 0
+
+  // Determinamos qué constructor es compañía y cuál contraparte según el label
+  const esCompania = label.toLowerCase().includes("compañ") || label.toLowerCase().includes("compania")
+  const constructorCompania = esCompania
+    ? { tipo: "visual" as const, operaciones: ops }
+    : constructorOtroLado!
+  const constructorContraparte = esCompania
+    ? constructorOtroLado!
+    : { tipo: "visual" as const, operaciones: ops }
 
   return (
     <div className="space-y-3">
@@ -121,7 +147,7 @@ export default function EditorClave({
             ))}
           </div>
 
-          {/* Preview con datos reales */}
+          {/* Preview con datos reales (ya existía) */}
           {filaMuestra && (
             <div className="bg-ink-50 border border-ink-200 rounded-md p-3 space-y-2">
               <div className="text-2xs uppercase tracking-wider text-ink-500">Preview con primera fila</div>
@@ -144,6 +170,15 @@ export default function EditorClave({
                 </span>
               </div>
             </div>
+          )}
+
+          {/* Panel "Probar clave" contra movimientos reales */}
+          {mostrarProbarClave && (
+            <ProbarClavePanel
+              contraparteId={contraparteId!}
+              constructorCompania={constructorCompania}
+              constructorContraparte={constructorContraparte}
+            />
           )}
         </>
       ) : (

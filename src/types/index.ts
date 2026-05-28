@@ -27,6 +27,8 @@ export type MapeoCompania = {
   importe_usd?: string | null
   descripcion?: string | null
   moneda?: string | null
+  importe_ars_invertir?: boolean   // si true, multiplica importe_ars por -1 al normalizar
+  importe_usd_invertir?: boolean   // si true, multiplica importe_usd por -1 al normalizar
 }
 
 export type MapeoContraparte = {
@@ -38,6 +40,7 @@ export type MapeoContraparte = {
   descripcion?: string | null
   importe_a_favor_cliente?: string | null
   importe_a_favor_contraparte?: string | null
+  importe_invertir?: boolean       // si true, multiplica importe por -1 al normalizar
 }
 
 // ----- Operaciones para construir clave -----

@@ -403,11 +403,11 @@ export default function EditarPlantillaPage() {
             { key: "comprobante", label: "Nro comprobante", req: true },
             { key: "sucursal", label: "Sucursal", req: false },
             { key: "letra", label: "Letra", req: false },
-            { key: "importe_ars", label: "Importe ARS", req: true },
-            { key: "importe_usd", label: "Importe USD", req: false },
+            { key: "importe_ars", label: "Importe ARS", req: true, flagInvertir: "importe_ars_invertir" },
+            { key: "importe_usd", label: "Importe USD", req: false, flagInvertir: "importe_usd_invertir" },
             { key: "descripcion", label: "Descripción", req: false },
           ]}
-          valor={plantilla.mapeo_compania as unknown as Record<string, string>}
+          valor={plantilla.mapeo_compania as unknown as Record<string, string | boolean>}
           onChange={(v) => actualizar("mapeo_compania", v as unknown as MapeoCompania)}
         />
         <MapeoColumnas
@@ -417,11 +417,11 @@ export default function EditarPlantillaPage() {
             { key: "fecha", label: "Fecha", req: true },
             { key: "tipo", label: "Tipo documento", req: true },
             { key: "comprobante", label: "Nro legal del documento", req: true },
-            { key: "importe", label: "Importe", req: true },
+            { key: "importe", label: "Importe", req: true, flagInvertir: "importe_invertir" },
             { key: "moneda", label: "Moneda", req: false },
             { key: "descripcion", label: "Descripción", req: false },
           ]}
-          valor={plantilla.mapeo_contraparte as unknown as Record<string, string>}
+          valor={plantilla.mapeo_contraparte as unknown as Record<string, string | boolean>}
           onChange={(v) => actualizar("mapeo_contraparte", v as unknown as MapeoContraparte)}
         />
       </section>
@@ -555,29 +555,42 @@ function MapeoColumnas({
 }: {
   titulo: string
   columnas: string[]
-  campos: { key: string; label: string; req: boolean }[]
-  valor: Record<string, string>
-  onChange: (v: Record<string, string>) => void
+  campos: { key: string; label: string; req: boolean; flagInvertir?: string }[]
+  valor: Record<string, string | boolean>
+  onChange: (v: Record<string, string | boolean>) => void
 }) {
   return (
     <div className="card">
       <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">{titulo}</div>
       <div className="space-y-2">
         {campos.map((c) => (
-          <div key={c.key} className="flex items-center gap-2">
-            <label className="text-xs text-ink-700 w-32 flex-shrink-0">
+          <div key={c.key} className="flex items-start gap-2">
+            <label className="text-xs text-ink-700 w-32 flex-shrink-0 pt-1.5">
               {c.label} {c.req && <span className="text-error">*</span>}
             </label>
-            <select
-              value={valor[c.key] ?? ""}
-              onChange={(e) => onChange({ ...valor, [c.key]: e.target.value })}
-              className="input text-xs flex-1"
-            >
-              <option value="">— ninguna —</option>
-              {columnas.map((col) => (
-                <option key={col} value={col}>{col}</option>
-              ))}
-            </select>
+            <div className="flex-1 space-y-1">
+              <select
+                value={(valor[c.key] as string) ?? ""}
+                onChange={(e) => onChange({ ...valor, [c.key]: e.target.value })}
+                className="input text-xs w-full"
+              >
+                <option value="">— ninguna —</option>
+                {columnas.map((col) => (
+                  <option key={col} value={col}>{col}</option>
+                ))}
+              </select>
+              {c.flagInvertir && (valor[c.key] as string) && (
+                <label className="flex items-center gap-1.5 cursor-pointer select-none w-fit">
+                  <input
+                    type="checkbox"
+                    checked={!!valor[c.flagInvertir]}
+                    onChange={(e) => onChange({ ...valor, [c.flagInvertir!]: e.target.checked })}
+                    className="w-3 h-3 accent-brand"
+                  />
+                  <span className="text-2xs text-ink-500">Invertir signo (×−1)</span>
+                </label>
+              )}
+            </div>
           </div>
         ))}
       </div>

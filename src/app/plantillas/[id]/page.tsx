@@ -674,38 +674,120 @@ function ReglaCard({
 
           {/* Constructor de claves — con contraparteId para "Probar clave" */}
           {regla.metodo_match === "clave" && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <EditorClave
-                label="Clave compañía"
-                constructor={regla.clave_compania}
-                columnasDisponibles={columnasCmp}
-                filaMuestra={filaMuestraCmp}
-                onChange={(c) => onChange({ clave_compania: c })}
-                contraparteId={contraparteId}
-                constructorOtroLado={regla.clave_contraparte}
-              />
-              <EditorClave
-                label="Clave contraparte"
-                constructor={regla.clave_contraparte}
-                columnasDisponibles={columnasCont}
-                filaMuestra={filaMuestraCont}
-                onChange={(c) => onChange({ clave_contraparte: c })}
-                contraparteId={contraparteId}
-                constructorOtroLado={regla.clave_compania}
-              />
-            </div>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <EditorClave
+                  label="Clave compañía"
+                  constructor={regla.clave_compania}
+                  columnasDisponibles={columnasCmp}
+                  filaMuestra={filaMuestraCmp}
+                  onChange={(c) => onChange({ clave_compania: c })}
+                  contraparteId={contraparteId}
+                  constructorOtroLado={regla.clave_contraparte}
+                />
+                <EditorClave
+                  label="Clave contraparte"
+                  constructor={regla.clave_contraparte}
+                  columnasDisponibles={columnasCont}
+                  filaMuestra={filaMuestraCont}
+                  onChange={(c) => onChange({ clave_contraparte: c })}
+                  contraparteId={contraparteId}
+                  constructorOtroLado={regla.clave_compania}
+                />
+              </div>
+              {/* Tolerancia de importe para esta regla (opcional, overridea el global) */}
+              <div className="border border-ink-200 rounded-md p-3 bg-ink-50 space-y-1">
+                <div className="label flex items-center gap-2">
+                  Tolerancia de importe
+                  {regla.tolerancia_importe_override !== undefined && (
+                    <span className="text-accent font-normal normal-case text-2xs bg-accent-light px-1.5 py-0.5 rounded">
+                      override activo
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={regla.tolerancia_importe_override ?? ""}
+                    placeholder="Vacío = usa el global de la plantilla"
+                    onChange={(e) => onChange({
+                      tolerancia_importe_override: e.target.value === "" ? undefined : Number(e.target.value)
+                    })}
+                    className="input w-64"
+                  />
+                  {regla.tolerancia_importe_override !== undefined && (
+                    <button
+                      type="button"
+                      onClick={() => onChange({ tolerancia_importe_override: undefined })}
+                      className="text-xs text-ink-400 hover:text-danger underline"
+                    >
+                      Volver al global
+                    </button>
+                  )}
+                </div>
+                <div className="text-2xs text-ink-400">
+                  Diferencia máxima en $ entre importes para considerar match exacto. Dejá vacío para usar el valor global de la plantilla.
+                </div>
+              </div>
+            </>
           )}
 
           {regla.metodo_match === "importe_fecha" && (
-            <div>
-              <div className="label">Ventana de tolerancia (días)</div>
-              <input
-                type="number"
-                min={0}
-                value={regla.ventana_dias ?? 5}
-                onChange={(e) => onChange({ ventana_dias: Number(e.target.value) })}
-                className="input w-32"
-              />
+            <div className="border border-ink-200 rounded-md p-3 bg-ink-50 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <div className="label">Ventana de fechas (días)</div>
+                  <input
+                    type="number"
+                    min={0}
+                    value={regla.ventana_dias ?? 5}
+                    onChange={(e) => onChange({ ventana_dias: Number(e.target.value) })}
+                    className="input w-full"
+                  />
+                  <div className="text-2xs text-ink-400">
+                    Días de diferencia aceptables entre fechas del mismo movimiento (±).
+                    Recomendado: 3–5 días para pagos típicos.
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="label flex items-center gap-2">
+                    Tolerancia de importe
+                    {regla.tolerancia_importe_override !== undefined && (
+                      <span className="text-accent font-normal normal-case text-2xs bg-accent-light px-1.5 py-0.5 rounded">
+                        override activo
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={regla.tolerancia_importe_override ?? ""}
+                      placeholder="Vacío = usa el global"
+                      onChange={(e) => onChange({
+                        tolerancia_importe_override: e.target.value === "" ? undefined : Number(e.target.value)
+                      })}
+                      className="input w-full"
+                    />
+                    {regla.tolerancia_importe_override !== undefined && (
+                      <button
+                        type="button"
+                        onClick={() => onChange({ tolerancia_importe_override: undefined })}
+                        className="text-xs text-ink-400 hover:text-danger underline whitespace-nowrap"
+                      >
+                        Volver al global
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-2xs text-ink-400">
+                    Diferencia máxima en $ entre importes para considerar match.
+                    0 = exacto. Dejá vacío para usar el global de la plantilla.
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

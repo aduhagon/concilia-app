@@ -53,7 +53,6 @@ export function conciliar(
   const decisiones: DecisionMotor[] = []
   const sugerencias: SugerenciaAgrupada[] = []
 
-  // Ordenar reglas por prioridad (menor número = más prioridad). Default 100.
   const plantillaOrdenada: PlantillaProveedor = {
     ...plantilla,
     reglas_tipos: [...plantilla.reglas_tipos].sort(
@@ -89,15 +88,18 @@ export function conciliar(
       (r) => r.regla_id === regla.id && r.origen === "contraparte" && r.estado === "pendiente"
     )
 
+    // Tolerancia: usa el override de la regla si está definido, sino el global
+    const tolerancia = regla.tolerancia_importe_override ?? plantillaOrdenada.config.tolerancia_importe
+
     if (regla.metodo_match === "clave") {
-      matchPorClave(compania, contraparte, plantillaOrdenada.config.tolerancia_importe, plantillaOrdenada.config.moneda_separada, decisiones)
+      matchPorClave(compania, contraparte, tolerancia, plantillaOrdenada.config.moneda_separada, decisiones)
     } else if (regla.metodo_match === "importe_fecha") {
       const ventana = regla.ventana_dias ?? plantillaOrdenada.config.ventana_dias_default
-      matchPorImporteFecha(compania, contraparte, ventana, plantillaOrdenada.config.tolerancia_importe, decisiones)
+      matchPorImporteFecha(compania, contraparte, ventana, tolerancia, decisiones)
     }
   }
 
-  // NIVEL 4 — Match agrupado (sugerencias, no automático)
+  // NIVEL 4 — Match agrupado
   for (const regla of plantillaOrdenada.reglas_tipos) {
     if (regla.metodo_match !== "importe_fecha") continue
 
@@ -109,7 +111,8 @@ export function conciliar(
     )
 
     const ventana = regla.ventana_dias ?? plantillaOrdenada.config.ventana_dias_default
-    const tolerancia = plantillaOrdenada.config.tolerancia_importe
+    // También usa el override aquí
+    const tolerancia = regla.tolerancia_importe_override ?? plantillaOrdenada.config.tolerancia_importe
 
     buscarAgrupados(pendCompania, pendContraparte, ventana, tolerancia, "compania", regla.id, sugerencias)
     buscarAgrupados(pendContraparte, pendCompania, ventana, tolerancia, "contraparte", regla.id, sugerencias)

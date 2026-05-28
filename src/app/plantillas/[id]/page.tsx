@@ -16,6 +16,7 @@ import type {
   ConstructorClave,
 } from "@/types"
 import { ArrowLeft, Save, Upload, Plus, Trash2, ChevronDown, ChevronUp, FileWarning, History, Clock, ArrowUp, ArrowDown } from "lucide-react"
+import { ArrowLeft, Save, Upload, Plus, Trash2, ChevronDown, ChevronUp, FileWarning, History, Clock, ArrowUp, ArrowDown, GripVertical } from "lucide-react"
 import Link from "next/link"
 
 const MAPEO_VACIO_CMP: MapeoCompania = {

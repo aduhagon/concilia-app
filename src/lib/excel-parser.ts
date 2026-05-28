@@ -82,7 +82,9 @@ export async function leerExcel(file: File): Promise<ResultadoExcel> {
 
 export function normalizarCompania(
   filas: Record<string, unknown>[],
-  mapeo: MapeoCompania
+  mapeo: MapeoCompania,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _prefijo?: string
 ): MovimientoNorm[] {
   return filas
     .map((f, idx) => {
@@ -123,7 +125,9 @@ export function normalizarCompania(
 
 export function normalizarContraparte(
   filas: Record<string, unknown>[],
-  mapeo: MapeoContraparte
+  mapeo: MapeoContraparte,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _prefijo?: string
 ): MovimientoNorm[] {
   return filas
     .map((f, idx) => {

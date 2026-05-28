@@ -50,6 +50,7 @@ export default function EditarPlantillaPage() {
     nombre_usuario: string | null
   }[]>([])
   const [cargandoHist, setCargandoHist] = useState(false)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
 
   useEffect(() => {
     async function cargar() {
@@ -155,6 +156,19 @@ export default function EditarPlantillaPage() {
     if (!plantilla) return
     if (!confirm("¿Eliminar esta regla?")) return
     actualizar("reglas_tipos", plantilla.reglas_tipos.filter((_, i) => i !== idx))
+  }
+
+  function reordenarPorDrag(fromId: string, toId: string) {
+    if (!plantilla || fromId === toId) return
+    const ordenadas = [...plantilla.reglas_tipos].sort((a, b) => (a.prioridad ?? 100) - (b.prioridad ?? 100))
+    const fromIdx = ordenadas.findIndex(r => r.id === fromId)
+    const toIdx = ordenadas.findIndex(r => r.id === toId)
+    if (fromIdx === -1 || toIdx === -1) return
+    const result = [...ordenadas]
+    const [moved] = result.splice(fromIdx, 1)
+    result.splice(toIdx, 0, moved)
+    const conPrio = result.map((r, i) => ({ ...r, prioridad: (i + 1) * 10 }))
+    setPlantilla({ ...plantilla, reglas_tipos: conPrio })
   }
 
   async function guardar() {
@@ -442,37 +456,47 @@ export default function EditarPlantillaPage() {
             const esPrimero = posicionVisible === 0
             const esUltimo = posicionVisible === reglasOrdenadas.length - 1
             return (
-              <ReglaCard
+              <div
                 key={regla.id}
-                regla={regla}
-                posicion={posicionVisible + 1}
-                totalReglas={reglasOrdenadas.length}
-                abierta={reglaAbierta === regla.id}
-                onToggle={() => setReglaAbierta(reglaAbierta === regla.id ? null : regla.id)}
-                onChange={(parcial) => actualizarRegla(originalIdx, parcial)}
-                onDelete={() => eliminarRegla(originalIdx)}
-                onSubirPrioridad={esPrimero ? undefined : () => {
-                  const conPrio = reglasOrdenadas.map((r, i) => ({ ...r, prioridad: (i + 1) * 10 }))
-                  const tmp = conPrio[posicionVisible].prioridad!
-                  conPrio[posicionVisible].prioridad = conPrio[posicionVisible - 1].prioridad
-                  conPrio[posicionVisible - 1].prioridad = tmp
-                  setPlantilla({ ...plantilla, reglas_tipos: conPrio })
-                }}
-                onBajarPrioridad={esUltimo ? undefined : () => {
-                  const conPrio = reglasOrdenadas.map((r, i) => ({ ...r, prioridad: (i + 1) * 10 }))
-                  const tmp = conPrio[posicionVisible].prioridad!
-                  conPrio[posicionVisible].prioridad = conPrio[posicionVisible + 1].prioridad
-                  conPrio[posicionVisible + 1].prioridad = tmp
-                  setPlantilla({ ...plantilla, reglas_tipos: conPrio })
-                }}
-                columnasCmp={muestraCmp.columnas}
-                columnasCont={muestraCont.columnas}
-                filaMuestraCmp={muestraCmp.filas[1]}
-                filaMuestraCont={muestraCont.filas[1]}
-                tiposCmpEnArchivo={tiposUnicos(muestraCmp.filas, plantilla.mapeo_compania.tipo)}
-                tiposContEnArchivo={tiposUnicos(muestraCont.filas, plantilla.mapeo_contraparte.tipo)}
-                contraparteId={contraparteId}
-              />
+                draggable
+                onDragStart={(e) => { e.dataTransfer.setData("reglaId", regla.id); e.dataTransfer.effectAllowed = "move" }}
+                onDragOver={(e) => { e.preventDefault(); setDragOverId(regla.id) }}
+                onDragLeave={() => setDragOverId(null)}
+                onDrop={(e) => { e.preventDefault(); const fromId = e.dataTransfer.getData("reglaId"); reordenarPorDrag(fromId, regla.id); setDragOverId(null) }}
+                onDragEnd={() => setDragOverId(null)}
+                className={`transition-all ${dragOverId === regla.id ? "ring-2 ring-accent ring-offset-1 opacity-80" : ""}`}
+              >
+                <ReglaCard
+                  regla={regla}
+                  posicion={posicionVisible + 1}
+                  totalReglas={reglasOrdenadas.length}
+                  abierta={reglaAbierta === regla.id}
+                  onToggle={() => setReglaAbierta(reglaAbierta === regla.id ? null : regla.id)}
+                  onChange={(parcial) => actualizarRegla(originalIdx, parcial)}
+                  onDelete={() => eliminarRegla(originalIdx)}
+                  onSubirPrioridad={esPrimero ? undefined : () => {
+                    const conPrio = reglasOrdenadas.map((r, i) => ({ ...r, prioridad: (i + 1) * 10 }))
+                    const tmp = conPrio[posicionVisible].prioridad!
+                    conPrio[posicionVisible].prioridad = conPrio[posicionVisible - 1].prioridad
+                    conPrio[posicionVisible - 1].prioridad = tmp
+                    setPlantilla({ ...plantilla, reglas_tipos: conPrio })
+                  }}
+                  onBajarPrioridad={esUltimo ? undefined : () => {
+                    const conPrio = reglasOrdenadas.map((r, i) => ({ ...r, prioridad: (i + 1) * 10 }))
+                    const tmp = conPrio[posicionVisible].prioridad!
+                    conPrio[posicionVisible].prioridad = conPrio[posicionVisible + 1].prioridad
+                    conPrio[posicionVisible + 1].prioridad = tmp
+                    setPlantilla({ ...plantilla, reglas_tipos: conPrio })
+                  }}
+                  columnasCmp={muestraCmp.columnas}
+                  columnasCont={muestraCont.columnas}
+                  filaMuestraCmp={muestraCmp.filas[1]}
+                  filaMuestraCont={muestraCont.filas[1]}
+                  tiposCmpEnArchivo={tiposUnicos(muestraCmp.filas, plantilla.mapeo_compania.tipo)}
+                  tiposContEnArchivo={tiposUnicos(muestraCont.filas, plantilla.mapeo_contraparte.tipo)}
+                  contraparteId={contraparteId}
+                />
+              </div>
             )
           })}
       </section>
@@ -588,26 +612,35 @@ function ReglaCard({
   return (
     <div className="card-tight">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
-          <button
-            onClick={onSubirPrioridad}
-            disabled={!onSubirPrioridad}
-            className="text-ink-400 hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
-            title="Subir prioridad"
+        {/* Handle de drag + flechas de prioridad */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <div
+            className="cursor-grab active:cursor-grabbing text-ink-300 hover:text-ink-500 transition-colors px-0.5"
+            title="Arrastrá para reordenar"
           >
-            <ArrowUp size={11} />
-          </button>
-          <span className="text-2xs font-mono font-bold text-ink-500 bg-ink-100 rounded px-1.5 py-0.5 min-w-[24px] text-center">
-            {posicion}
-          </span>
-          <button
-            onClick={onBajarPrioridad}
-            disabled={!onBajarPrioridad}
-            className="text-ink-400 hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
-            title="Bajar prioridad"
-          >
-            <ArrowDown size={11} />
-          </button>
+            <GripVertical size={16} />
+          </div>
+          <div className="flex flex-col items-center gap-0.5">
+            <button
+              onClick={onSubirPrioridad}
+              disabled={!onSubirPrioridad}
+              className="text-ink-400 hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+              title="Subir prioridad"
+            >
+              <ArrowUp size={11} />
+            </button>
+            <span className="text-2xs font-mono font-bold text-ink-500 bg-ink-100 rounded px-1.5 py-0.5 min-w-[24px] text-center">
+              {posicion}
+            </span>
+            <button
+              onClick={onBajarPrioridad}
+              disabled={!onBajarPrioridad}
+              className="text-ink-400 hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+              title="Bajar prioridad"
+            >
+              <ArrowDown size={11} />
+            </button>
+          </div>
         </div>
 
         <button onClick={onToggle} className="flex items-center gap-2 flex-1 text-left">

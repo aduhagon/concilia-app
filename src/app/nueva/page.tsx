@@ -602,14 +602,34 @@ export default function NuevaConciliacionPage() {
           </div>
 
           {ultimaConc && (
-            <div className="card bg-ok-light/40 border-ok/30 flex items-start gap-2">
-              <CheckCircle2 size={14} className="text-ok flex-shrink-0 mt-0.5" />
-              <div className="text-xs text-ink-700 flex-1">
-                <strong>Saldo inicial autocompletado</strong>
-                {ultimaConc.periodo_label && (
-                  <> desde la conciliación aprobada de <strong>{ultimaConc.periodo_label}</strong></>
-                )}.{" "}
-                Si lo necesitás, podés editarlo manualmente — los cambios quedan registrados.
+            <div className="card bg-ok-light/40 border-ok/30 space-y-2">
+              <div className="flex items-start gap-2">
+                <CheckCircle2 size={14} className="text-ok flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-ink-700 flex-1">
+                  <strong>Saldos iniciales autocompletados</strong>
+                  {ultimaConc.periodo_label && (
+                    <> desde <strong>{ultimaConc.periodo_label}</strong></>
+                  )}.{" "}
+                  Verificalos antes de continuar — podés editarlos si no coinciden.
+                </div>
+              </div>
+              {/* Detalle de saldos autocompletados */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pl-5">
+                {[
+                  { label: "Cía ARS", value: ultimaConc.saldo_final_compania_ars },
+                  { label: "Cía USD", value: ultimaConc.saldo_final_compania_usd },
+                  { label: "Ctp ARS", value: ultimaConc.saldo_final_contraparte_ars },
+                  { label: "Ctp USD", value: ultimaConc.saldo_final_contraparte_usd },
+                ].map(({ label, value }) => (
+                  <div key={label} className="text-2xs">
+                    <span className="text-ink-500">{label}: </span>
+                    <span className="font-mono font-semibold text-ink-700">
+                      {value !== null
+                        ? Number(value).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : "—"}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           )}

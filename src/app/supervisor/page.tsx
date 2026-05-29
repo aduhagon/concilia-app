@@ -59,6 +59,7 @@ export default function SupervisorPage() {
   const [filtroCategoria, setFiltroCategoria] = useState("")
   const [filtroSociedad, setFiltroSociedad] = useState("")
   const [busqueda, setBusqueda] = useState("")
+  const [exportando, setExportando] = useState(false)
 
   useEffect(() => {
     async function cargar() {
@@ -121,6 +122,114 @@ export default function SupervisorPage() {
   const hoy = new Date()
   const mesLabel = hoy.toLocaleString("es-AR", { month: "long", year: "numeric" })
 
+  async function exportarExcel() {
+    if (filtradas.length === 0) return
+    setExportando(true)
+    try {
+      const XLSX = await import("xlsx")
+
+      const wb = XLSX.utils.book_new()
+
+      // === HOJA 1: Resumen del mes ===
+      const resumenData = [
+        ["TABLERO DE CIERRE — " + mesLabel.toUpperCase()],
+        ["Generado el " + hoy.toLocaleString("es-AR")],
+        [],
+        ["", "Cantidad", "% del total"],
+        ["Conciliadas",  kpis.conciliadas,  kpis.total > 0 ? Math.round(kpis.conciliadas / kpis.total * 100) + "%" : "—"],
+        ["Pendientes",   kpis.pendientes,   kpis.total > 0 ? Math.round(kpis.pendientes  / kpis.total * 100) + "%" : "—"],
+        ["Vencidas",     kpis.vencidas,     kpis.total > 0 ? Math.round(kpis.vencidas    / kpis.total * 100) + "%" : "—"],
+        ["Sin iniciar",  kpis.sin_iniciar,  kpis.total > 0 ? Math.round(kpis.sin_iniciar / kpis.total * 100) + "%" : "—"],
+        [],
+        ["TOTAL CUENTAS ACTIVAS", kpis.total],
+        ["AVANCE DEL MES", kpis.total > 0 ? Math.round(kpis.conciliadas / kpis.total * 100) + "%" : "0%"],
+        [],
+        ["Filtros aplicados"],
+        ["Estado",    filtroEstado    || "Todos"],
+        ["Categoría", filtroCategoria || "Todas"],
+        ["Sociedad",  filtroSociedad  || "Todas"],
+        ["Búsqueda",  busqueda        || "—"],
+        ["Cuentas en este reporte", filtradas.length],
+      ]
+
+      const wsResumen = XLSX.utils.aoa_to_sheet(resumenData)
+      wsResumen["!cols"] = [{ wch: 28 }, { wch: 12 }, { wch: 14 }]
+      XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen")
+
+      // === HOJA 2: Detalle de cuentas (con filtros activos) ===
+      const ESTADO_LABEL: Record<string, string> = {
+        conciliada: "Conciliada",
+        pendiente: "Pendiente",
+        vencida: "Vencida",
+        sin_iniciar: "Sin iniciar",
+      }
+
+      const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0)
+
+      const headers = [
+        "Cuenta", "CUIT", "Categoría", "Sociedad",
+        "Estado", "Alerta semanal",
+        "Próx. vencimiento", "Días para vencer",
+        "Última conciliación", "Última diferencia ARS",
+        "Total conciliaciones",
+      ]
+
+      const filas = filtradas.map(c => {
+        const dias = c.prox_conciliacion
+          ? Math.ceil((new Date(c.prox_conciliacion).getTime() - hoy0.getTime()) / 86400000)
+          : null
+        return [
+          c.nombre,
+          c.cuit ?? "",
+          c.categoria ?? "",
+          c.sociedad ?? "",
+          ESTADO_LABEL[c.estado] ?? c.estado,
+          c.alerta_semanal ? "SÍ" : "No",
+          c.prox_conciliacion ? new Date(c.prox_conciliacion).toLocaleDateString("es-AR") : "",
+          dias !== null ? dias : "",
+          c.ultima_conciliacion ? new Date(c.ultima_conciliacion).toLocaleDateString("es-AR") : "Sin conciliaciones",
+          c.ultima_diferencia !== null ? c.ultima_diferencia : "",
+          c.total_conciliaciones,
+        ]
+      })
+
+      const wsDetalle = XLSX.utils.aoa_to_sheet([headers, ...filas])
+      wsDetalle["!cols"] = [
+        { wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 20 },
+        { wch: 16 }, { wch: 14 },
+        { wch: 18 }, { wch: 14 },
+        { wch: 20 }, { wch: 22 },
+        { wch: 18 },
+      ]
+      XLSX.utils.book_append_sheet(wb, wsDetalle, "Cuentas")
+
+      // === HOJA 3: Solo vencidas (si hay) ===
+      const vencidas = filtradas.filter(c => c.estado === "vencida")
+      if (vencidas.length > 0) {
+        const filasVenc = vencidas.map(c => [
+          c.nombre, c.cuit ?? "", c.categoria ?? "", c.sociedad ?? "",
+          c.prox_conciliacion ? new Date(c.prox_conciliacion).toLocaleDateString("es-AR") : "",
+          c.ultima_conciliacion ? new Date(c.ultima_conciliacion).toLocaleDateString("es-AR") : "Sin conciliaciones",
+          c.ultima_diferencia !== null ? c.ultima_diferencia : "",
+        ])
+        const wsVenc = XLSX.utils.aoa_to_sheet([
+          ["Cuenta", "CUIT", "Categoría", "Sociedad", "Venció el", "Última conc.", "Última diferencia ARS"],
+          ...filasVenc
+        ])
+        wsVenc["!cols"] = [{ wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 20 }, { wch: 16 }, { wch: 18 }, { wch: 22 }]
+        XLSX.utils.book_append_sheet(wb, wsVenc, "Vencidas")
+      }
+
+      // Descargar
+      const fecha = hoy.toISOString().slice(0, 10)
+      XLSX.writeFile(wb, `tablero_${mesLabel.replace(/\s+/g, "_").toLowerCase()}_${fecha}.xlsx`)
+    } catch (e) {
+      console.error("Error al exportar:", e)
+    } finally {
+      setExportando(false)
+    }
+  }
+
   return (
     <div className="px-6 py-6 space-y-6">
 
@@ -134,10 +243,12 @@ export default function SupervisorPage() {
           <p className="text-ink-600 mt-1 text-sm">Estado de conciliaciones — Grupo MSU</p>
         </div>
         <button
-          onClick={() => alert("Exportar a Excel — próximamente")}
-          className="btn btn-secondary"
+          onClick={exportarExcel}
+          disabled={exportando || filtradas.length === 0}
+          className="btn btn-secondary disabled:opacity-40"
         >
-          <Download size={14} /> Exportar
+          <Download size={14} />
+          {exportando ? "Exportando…" : `Exportar Excel${filtradas.length !== cuentas.length ? ` (${filtradas.length})` : ""}`}
         </button>
       </div>
 

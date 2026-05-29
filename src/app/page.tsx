@@ -7,7 +7,7 @@ import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
 import {
   CheckCircle2, AlertCircle, ArrowRight, Building2,
-  Plus, Clock, Bell, TrendingUp, Users, Calendar
+  Plus, Clock, Bell, TrendingUp, Users, Calendar, Timer
 } from "lucide-react"
 import { formatNumCompact, formatNum, antiguedad } from "@/lib/format"
 import CategoriaBadge from "@/components/CategoriaBadge"
@@ -36,6 +36,15 @@ type CuentaOperativo = {
   alerta_semanal: boolean
 }
 
+// Para el panel de aprobaciones pendientes del supervisor
+type ConcPendienteAprobacion = {
+  id: string
+  contraparte_nombre: string
+  periodo_label: string | null
+  cerrado_fecha: string | null
+  diferencia_final_ars: number | null
+}
+
 export default function HomePage() {
   const [rol, setRol] = useState<Rol>(null)
   const [nombre, setNombre] = useState("")
@@ -47,6 +56,9 @@ export default function HomePage() {
   const [statsSuper, setStatsSuper] = useState({
     total: 0, conciliadas: 0, vencidas: 0, pendientes: 0, alertas: 0
   })
+
+  // B: conciliaciones esperando aprobación del supervisor
+  const [pendientesAprobacion, setPendientesAprobacion] = useState<ConcPendienteAprobacion[]>([])
 
   useEffect(() => {
     async function cargar() {
@@ -67,7 +79,10 @@ export default function HomePage() {
       if (u.rol === "operativo") {
         await cargarCuentasOperativo(user.id)
       } else {
-        await cargarStatsSupervision()
+        await Promise.all([
+          cargarStatsSupervision(),
+          cargarPendientesAprobacion(),
+        ])
       }
 
       setLoading(false)
@@ -136,6 +151,26 @@ export default function HomePage() {
     })
   }
 
+  // B: cargar conciliaciones cerradas esperando aprobación, ordenadas por antigüedad
+  async function cargarPendientesAprobacion() {
+    const { data } = await supabase
+      .from("conciliaciones")
+      .select("id, periodo_label, cerrado_fecha, diferencia_final_ars, contrapartes(nombre)")
+      .eq("estado", "cerrado_operativo")
+      .order("cerrado_fecha", { ascending: true }) // más antiguas primero
+      .limit(20)
+
+    setPendientesAprobacion(
+      (data ?? []).map((c: any) => ({
+        id: c.id,
+        contraparte_nombre: c.contrapartes?.nombre ?? "—",
+        periodo_label: c.periodo_label,
+        cerrado_fecha: c.cerrado_fecha,
+        diferencia_final_ars: c.diferencia_final_ars,
+      }))
+    )
+  }
+
   const pct = statsSuper.total > 0
     ? Math.round((statsSuper.conciliadas / statsSuper.total) * 100) : 0
 
@@ -146,12 +181,15 @@ export default function HomePage() {
     return <div className="text-sm text-ink-400 text-center py-16">Cargando…</div>
   }
 
-  // ══════════════════════════════
-  // VISTA OPERATIVO
-  // ══════════════════════════════
+  // ══════════════════════════════════════════════
+  // VISTA OPERATIVO — Cola de trabajo priorizada
+  // ══════════════════════════════════════════════
   if (rol === "operativo") {
-    const urgentes = cuentas.filter(c => c.estado !== "conciliada")
+    const vencidas   = cuentas.filter(c => c.estado === "vencida")
+    const pendientes = cuentas.filter(c => c.estado === "pendiente")
+    const sinIniciar = cuentas.filter(c => c.estado === "sin_iniciar")
     const conciliadas = cuentas.filter(c => c.estado === "conciliada")
+    const urgentes = cuentas.filter(c => c.estado !== "conciliada")
 
     return (
       <div className="px-6 py-6 space-y-6">
@@ -175,32 +213,49 @@ export default function HomePage() {
           </Link>
         </div>
 
-        {/* Mis stats */}
+        {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard label="Mis cuentas" value={cuentas.length} icon={<Building2 size={13} />} />
           <StatCard label="Conciliadas" value={conciliadas.length} icon={<CheckCircle2 size={13} />} variant="ok" />
-          <StatCard label="Vencidas" value={cuentas.filter(c => c.estado === "vencida").length} icon={<AlertCircle size={13} />} variant={cuentas.filter(c => c.estado === "vencida").length > 0 ? "danger" : undefined} />
+          <StatCard label="Vencidas" value={vencidas.length} icon={<AlertCircle size={13} />} variant={vencidas.length > 0 ? "danger" : undefined} />
           <StatCard label="Alertas semanales" value={cuentas.filter(c => c.alerta_semanal).length} icon={<Bell size={13} />} variant={cuentas.filter(c => c.alerta_semanal).length > 0 ? "warn" : undefined} />
         </div>
 
-        {/* Cuentas urgentes */}
-        {urgentes.length > 0 && (
-          <div className="space-y-3">
-            <div className="text-sm font-semibold text-ink-700">⚡ Requieren atención</div>
-            <div className="panel divide-y divide-ink-100">
-              {urgentes.map(c => <CuentaRow key={c.id} c={c} rol={rol} />)}
-            </div>
-          </div>
+        {/* A: Cola priorizada — Vencidas primero */}
+        {vencidas.length > 0 && (
+          <GrupoCuentas
+            titulo="🔴 Vencidas — urgente"
+            subtitulo="El plazo ya pasó sin conciliar"
+            cuentas={vencidas}
+            rol={rol}
+          />
         )}
 
-        {/* Conciliadas */}
+        {pendientes.length > 0 && (
+          <GrupoCuentas
+            titulo="🟡 Pendientes"
+            subtitulo="Vencen próximamente"
+            cuentas={pendientes}
+            rol={rol}
+          />
+        )}
+
+        {sinIniciar.length > 0 && (
+          <GrupoCuentas
+            titulo="⚪ Sin iniciar"
+            subtitulo="Nunca tuvieron conciliación"
+            cuentas={sinIniciar}
+            rol={rol}
+          />
+        )}
+
+        {/* Conciliadas al final */}
         {conciliadas.length > 0 && (
-          <div className="space-y-3">
-            <div className="text-sm font-semibold text-ink-700">✅ Conciliadas este mes</div>
-            <div className="panel divide-y divide-ink-100">
-              {conciliadas.map(c => <CuentaRow key={c.id} c={c} rol={rol} />)}
-            </div>
-          </div>
+          <GrupoCuentas
+            titulo="✅ Conciliadas este mes"
+            cuentas={conciliadas}
+            rol={rol}
+          />
         )}
 
         {/* Sin cuentas asignadas */}
@@ -218,9 +273,9 @@ export default function HomePage() {
     )
   }
 
-  // ══════════════════════════════
-  // VISTA SUPERVISOR / ADMIN
-  // ══════════════════════════════
+  // ══════════════════════════════════════════════
+  // VISTA SUPERVISOR / ADMIN — con SLA aprobación
+  // ══════════════════════════════════════════════
   return (
     <div className="px-6 py-6 space-y-6">
 
@@ -269,7 +324,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Alertas */}
+      {/* Alertas de vencidas */}
       {statsSuper.vencidas > 0 && (
         <div className="flex items-center gap-3 bg-danger-light border border-danger/20 px-4 py-3 text-sm">
           <AlertCircle size={16} className="text-danger flex-shrink-0" />
@@ -278,6 +333,89 @@ export default function HomePage() {
             {" "}sin conciliar.{" "}
             <Link href="/supervisor" className="underline text-danger">Ver en el tablero →</Link>
           </span>
+        </div>
+      )}
+
+      {/* B: Cola de aprobaciones con SLA */}
+      {pendientesAprobacion.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-ink-700 flex items-center gap-2">
+              <Timer size={15} className="text-warn" />
+              Esperando tu aprobación
+              <span className="text-2xs font-normal bg-warn-light text-warn px-2 py-0.5 rounded-full">
+                {pendientesAprobacion.length}
+              </span>
+            </div>
+            <Link href="/supervisor" className="text-2xs text-ink-400 hover:text-accent">
+              Ver todas →
+            </Link>
+          </div>
+          <div className="panel divide-y divide-ink-100">
+            {pendientesAprobacion.map(conc => {
+              const diasEspera = conc.cerrado_fecha
+                ? Math.floor((Date.now() - new Date(conc.cerrado_fecha).getTime()) / 86400000)
+                : null
+              const slaColor = diasEspera === null ? "text-ink-400"
+                : diasEspera >= 3 ? "text-danger"
+                : diasEspera >= 1 ? "text-warn"
+                : "text-ok"
+              const slaBg = diasEspera === null ? "bg-ink-50"
+                : diasEspera >= 3 ? "bg-danger-light"
+                : diasEspera >= 1 ? "bg-warn-light"
+                : "bg-ok-light"
+              const difOk = conc.diferencia_final_ars !== null && Math.abs(conc.diferencia_final_ars) < 1
+
+              return (
+                <Link
+                  key={conc.id}
+                  href={`/conciliaciones/${conc.id}`}
+                  className="flex items-center justify-between px-4 py-3 hover:bg-ink-50 transition-colors group"
+                >
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    {/* Semáforo de SLA */}
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      diasEspera === null ? "bg-ink-300"
+                      : diasEspera >= 3 ? "bg-danger"
+                      : diasEspera >= 1 ? "bg-warn"
+                      : "bg-ok"
+                    }`} />
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold truncate">{conc.contraparte_nombre}</div>
+                      <div className="text-2xs text-ink-400 mt-0.5">
+                        {conc.periodo_label ?? "—"}
+                        {conc.cerrado_fecha && (
+                          <span className="ml-2">
+                            Cerrada el {new Date(conc.cerrado_fecha).toLocaleDateString("es-AR")}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    {/* Diferencia */}
+                    <div className="text-right hidden md:block">
+                      <div className="text-2xs text-ink-400">Diferencia</div>
+                      <div className={`text-xs font-mono font-semibold ${difOk ? "text-ok" : "text-warn"}`}>
+                        {difOk ? "✓ $0" : conc.diferencia_final_ars !== null ? `$${Math.abs(conc.diferencia_final_ars).toLocaleString("es-AR")}` : "—"}
+                      </div>
+                    </div>
+                    {/* Badge de días en espera */}
+                    <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full ${slaBg} ${slaColor}`}>
+                      {diasEspera === null ? "—"
+                        : diasEspera === 0 ? "Hoy"
+                        : diasEspera === 1 ? "1 día"
+                        : `${diasEspera} días`}
+                    </span>
+                    <ArrowRight size={13} className="text-ink-300 group-hover:text-accent transition-colors" />
+                  </div>
+                </Link>
+              )
+            })}
+          </div>
+          <p className="text-2xs text-ink-400 pl-1">
+            Verde = cerrada hoy · Naranja = 1–2 días · Rojo = 3+ días sin aprobar
+          </p>
         </div>
       )}
 
@@ -293,36 +431,55 @@ export default function HomePage() {
   )
 }
 
+// ── Sub-grupo de cuentas para la cola priorizada ──
+function GrupoCuentas({ titulo, subtitulo, cuentas, rol }: {
+  titulo: string
+  subtitulo?: string
+  cuentas: CuentaOperativo[]
+  rol: Rol
+}) {
+  return (
+    <div className="space-y-2">
+      <div>
+        <div className="text-sm font-semibold text-ink-700">{titulo}</div>
+        {subtitulo && <div className="text-2xs text-ink-400 mt-0.5">{subtitulo}</div>}
+      </div>
+      <div className="panel divide-y divide-ink-100">
+        {cuentas.map(c => <CuentaRow key={c.id} c={c} rol={rol} />)}
+      </div>
+    </div>
+  )
+}
+
 function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
   const dif = c.ultima_conc?.diferencia_final_ars ?? 0
   const difOk = Math.abs(dif) < 1
 
+  // Días para vencer (negativo = ya venció)
+  const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0)
+  const diasParaVencer = c.prox_conciliacion
+    ? Math.ceil((new Date(c.prox_conciliacion).getTime() - hoy0.getTime()) / 86400000)
+    : null
+
   const estadoCalendario: Record<string, { color: string; dot: string; label: string }> = {
-    conciliada:  { color: "bg-ok-light text-ok",       dot: "bg-ok",       label: "Conciliada"  },
-    pendiente:   { color: "bg-warn-light text-warn",   dot: "bg-warn",     label: "Pendiente"   },
-    vencida:     { color: "bg-danger-light text-danger",dot: "bg-danger",  label: "Vencida"     },
-    sin_iniciar: { color: "bg-ink-100 text-ink-500",   dot: "bg-ink-300",  label: "Sin iniciar" },
+    conciliada:  { color: "bg-ok-light text-ok",        dot: "bg-ok",      label: "Conciliada"  },
+    pendiente:   { color: "bg-warn-light text-warn",    dot: "bg-warn",    label: "Pendiente"   },
+    vencida:     { color: "bg-danger-light text-danger", dot: "bg-danger", label: "Vencida"     },
+    sin_iniciar: { color: "bg-ink-100 text-ink-500",    dot: "bg-ink-300", label: "Sin iniciar" },
   }
 
   const estadoCierreConfig: Record<string, { color: string; dot: string; label: string; prioridad: boolean }> = {
-    borrador:          { color: "bg-ink-100 text-ink-500",       dot: "bg-ink-300",  label: "Borrador",          prioridad: true  },
-    en_proceso:        { color: "bg-info-light text-info",       dot: "bg-info",     label: "En proceso",        prioridad: true  },
-    finalizada:        { color: "bg-warn-light text-warn",       dot: "bg-warn",     label: "Por cerrar",        prioridad: true  },
-    cerrado_operativo: { color: "bg-warn-light text-warn",       dot: "bg-warn",     label: "Pdte. aprobación",  prioridad: true  },
-    reabierto:         { color: "bg-danger-light text-danger",   dot: "bg-danger",   label: "Reabierta",         prioridad: true  },
-    aprobado:          { color: "bg-ok-light text-ok",           dot: "bg-ok",       label: "Aprobada",          prioridad: false },
+    borrador:          { color: "bg-ink-100 text-ink-500",     dot: "bg-ink-300", label: "Borrador",         prioridad: true  },
+    en_proceso:        { color: "bg-info-light text-info",     dot: "bg-info",    label: "En proceso",       prioridad: true  },
+    finalizada:        { color: "bg-warn-light text-warn",     dot: "bg-warn",    label: "Por cerrar",       prioridad: true  },
+    cerrado_operativo: { color: "bg-warn-light text-warn",     dot: "bg-warn",    label: "Pdte. aprobación", prioridad: true  },
+    reabierto:         { color: "bg-danger-light text-danger", dot: "bg-danger",  label: "Reabierta",        prioridad: true  },
+    aprobado:          { color: "bg-ok-light text-ok",         dot: "bg-ok",      label: "Aprobada",         prioridad: false },
   }
 
   const estadoCierre = c.ultima_conc?.estado ?? null
   const cierreCfg = estadoCierre ? estadoCierreConfig[estadoCierre] : null
-
-  // Badge unificado: el estado de cierre prevalece cuando tiene prioridad alta,
-  // en caso contrario (aprobado, sin estado) se muestra el estado calendario.
-  const badgeUnificado = cierreCfg?.prioridad
-    ? cierreCfg
-    : estadoCalendario[c.estado]
-
-  // El dot lateral siempre refleja la urgencia de calendario
+  const badgeUnificado = cierreCfg?.prioridad ? cierreCfg : estadoCalendario[c.estado]
   const dotColor = estadoCalendario[c.estado]?.dot ?? "bg-ink-300"
 
   const esSupervisor = rol === "supervisor" || rol === "admin"
@@ -335,7 +492,6 @@ function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
 
   return (
     <div className="flex items-center px-4 py-3 hover:bg-ink-50 transition-colors group">
-      {/* Indicador de urgencia — siempre refleja calendario */}
       <div className={`w-1 self-stretch rounded-full mr-3 flex-shrink-0 ${dotColor}`} />
 
       <Link
@@ -345,13 +501,24 @@ function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold truncate">{c.nombre}</span>
-            {c.alerta_semanal && (
-              <Bell size={11} className="text-warn flex-shrink-0" />
-            )}
+            {c.alerta_semanal && <Bell size={11} className="text-warn flex-shrink-0" />}
           </div>
           <div className="text-2xs text-ink-500 flex items-center gap-3 mt-0.5">
             {c.cuit && <span className="font-mono">{c.cuit}</span>}
             {c.sociedad && <span>{c.sociedad}</span>}
+            {/* A: días para vencer / vencido hace N días */}
+            {diasParaVencer !== null && (
+              <span className={
+                diasParaVencer < 0 ? "text-danger font-semibold" :
+                diasParaVencer <= 3 ? "text-warn font-semibold" :
+                "text-ink-400"
+              }>
+                {diasParaVencer < 0
+                  ? `Venció hace ${Math.abs(diasParaVencer)} día${Math.abs(diasParaVencer) !== 1 ? "s" : ""}`
+                  : diasParaVencer === 0 ? "Vence hoy"
+                  : `Vence en ${diasParaVencer} día${diasParaVencer !== 1 ? "s" : ""}`}
+              </span>
+            )}
             {c.ultima_conc?.periodo_label && (
               <span>Última: {c.ultima_conc.periodo_label}</span>
             )}
@@ -372,7 +539,7 @@ function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
         )}
       </div>
 
-      {/* Badge unificado — un solo indicador de estado */}
+      {/* Badge unificado */}
       <span className={`text-2xs font-semibold inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full mr-2 ${badgeUnificado.color}`}>
         <span className={`w-1.5 h-1.5 rounded-full ${badgeUnificado.dot}`} />
         {badgeUnificado.label}
@@ -381,29 +548,17 @@ function CuentaRow({ c, rol }: { c: CuentaOperativo; rol: Rol }) {
       {/* Botones de acción */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
         {puedeNuevaConc && (
-          <Link
-            href={`/nueva?contraparte=${c.id}`}
-            className="btn btn-secondary py-1 px-2 text-2xs"
-            onClick={e => e.stopPropagation()}
-          >
+          <Link href={`/nueva?contraparte=${c.id}`} className="btn btn-secondary py-1 px-2 text-2xs" onClick={e => e.stopPropagation()}>
             + Conciliar
           </Link>
         )}
         {puedeCerrar && (
-          <Link
-            href={`/conciliaciones/${c.ultima_conc!.id}`}
-            className="btn btn-secondary py-1 px-2 text-2xs text-warn border-warn/30"
-            onClick={e => e.stopPropagation()}
-          >
+          <Link href={`/conciliaciones/${c.ultima_conc!.id}`} className="btn btn-secondary py-1 px-2 text-2xs text-warn border-warn/30" onClick={e => e.stopPropagation()}>
             Cerrar →
           </Link>
         )}
         {puedeAprobar && (
-          <Link
-            href={`/conciliaciones/${c.ultima_conc!.id}`}
-            className="btn btn-secondary py-1 px-2 text-2xs text-ok border-ok/30"
-            onClick={e => e.stopPropagation()}
-          >
+          <Link href={`/conciliaciones/${c.ultima_conc!.id}`} className="btn btn-secondary py-1 px-2 text-2xs text-ok border-ok/30" onClick={e => e.stopPropagation()}>
             Aprobar →
           </Link>
         )}

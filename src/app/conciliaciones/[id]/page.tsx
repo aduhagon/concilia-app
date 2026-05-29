@@ -83,6 +83,7 @@ export default function DetalleConciliacionPage() {
   } | null>(null)
   const toast = useToast()
   const [observacion, setObservacion] = useState("")
+  const [causaReapertura, setCausaReapertura] = useState("")
   const [accionando, setAccionando] = useState(false)
   const [generandoPDF, setGenerandoPDF] = useState(false)
   const [password, setPassword] = useState("")
@@ -272,6 +273,11 @@ export default function DetalleConciliacionPage() {
     } else if (accion === "reabierto") {
       updates.reabierto_por = usuarioActual.id
       updates.reabierto_fecha = ahora
+      // causa raíz: si hay categoría la prefijamos en la observación
+      if (causaReapertura) {
+        const obsCompleta = causaReapertura + (observacion ? `: ${observacion}` : "")
+        updates.observacion_cierre = obsCompleta
+      }
     }
 
     await supabase.from("conciliaciones").update(updates).eq("id", c.id)
@@ -323,6 +329,7 @@ export default function DetalleConciliacionPage() {
     setC(cab as unknown as Conciliacion)
     setHistorial((hist ?? []) as unknown as HistorialItem[])
     setObservacion("")
+    setCausaReapertura("")
     setMostrarModalCierre(false)
     setMostrarModalAprobacion(false)
     setMostrarModalReapertura(false)
@@ -1217,19 +1224,50 @@ export default function DetalleConciliacionPage() {
         </div>
       )}
 
-      {/* Modal reapertura */}
+      {/* Modal reapertura con causa raíz */}
       {mostrarModalReapertura && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl space-y-4">
             <div className="text-base font-semibold">Reabrir conciliación</div>
             <p className="text-sm text-ink-600">La reapertura queda registrada en el log. Podés modificarla y volver a cerrarla.</p>
             <div>
-              <label className="label">Motivo de reapertura *</label>
-              <textarea value={observacion} onChange={e => setObservacion(e.target.value)} className="input w-full h-20 resize-none" placeholder="Explicá por qué se reabre…" />
+              <label className="label">Causa de reapertura *</label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                {[
+                  "Archivo incorrecto",
+                  "Error de clasificación",
+                  "Mapeo a corregir",
+                  "Diferencia no explicada",
+                  "Saldos incorrectos",
+                  "Otro",
+                ].map(causa => (
+                  <button
+                    key={causa}
+                    type="button"
+                    onClick={() => setCausaReapertura(causa)}
+                    className={`text-xs px-3 py-2 rounded border text-left transition-colors ${
+                      causaReapertura === causa
+                        ? "border-danger bg-danger-light text-danger font-semibold"
+                        : "border-ink-200 hover:border-ink-400 text-ink-700"
+                    }`}
+                  >
+                    {causa}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="label">Detalle adicional (opcional)</label>
+              <textarea
+                value={observacion}
+                onChange={e => setObservacion(e.target.value)}
+                className="input w-full h-16 resize-none"
+                placeholder="Descripción adicional para el operativo…"
+              />
             </div>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setMostrarModalReapertura(false)} className="btn btn-secondary">Cancelar</button>
-              <button onClick={() => ejecutarAccion("reabierto")} disabled={accionando || !observacion.trim()} className="btn btn-secondary text-danger disabled:opacity-40">
+              <button onClick={() => { setMostrarModalReapertura(false); setCausaReapertura("") }} className="btn btn-secondary">Cancelar</button>
+              <button onClick={() => ejecutarAccion("reabierto")} disabled={accionando || !causaReapertura} className="btn btn-secondary text-danger disabled:opacity-40">
                 <Unlock size={13} /> {accionando ? "Reabriendo…" : "Reabrir"}
               </button>
             </div>

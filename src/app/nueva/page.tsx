@@ -965,23 +965,172 @@ function Aviso({ variant, children }: { variant: "ok" | "warn"; children: React.
   )
 }
 
+type ArchivoPreview = {
+  filas: number
+  columnas: string[]
+  alertas: string[]
+  muestras: Record<string, string>[] // primeras 3 filas
+}
+
 function ArchivoCard({ label, file, onFile }: { label: string; file: File | null; onFile: (f: File) => void }) {
+  const [preview, setPreview] = useState<ArchivoPreview | null>(null)
+  const [leyendo, setLeyendo] = useState(false)
+
+  async function handleFile(f: File) {
+    onFile(f)
+    setLeyendo(true)
+    setPreview(null)
+    try {
+      const XLSX = await import("xlsx")
+      const buf = await f.arrayBuffer()
+      const wb = XLSX.read(buf, { type: "array" })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const filas = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" })
+
+      if (filas.length === 0) {
+        setPreview({ filas: 0, columnas: [], alertas: ["El archivo no tiene filas de datos"], muestras: [] })
+        setLeyendo(false)
+        return
+      }
+
+      const columnas = Object.keys(filas[0])
+      const alertas: string[] = []
+
+      // Detectar columnas con mayoría de valores vacíos
+      for (const col of columnas) {
+        const vacios = filas.filter(r => r[col] === "" || r[col] === null || r[col] === undefined).length
+        if (vacios > filas.length * 0.8) {
+          alertas.push(`Columna "${col}": ${vacios} de ${filas.length} filas vacías`)
+        }
+      }
+
+      // Detectar posibles columnas de importe con texto (no numérico)
+      const colsImporte = columnas.filter(c =>
+        /importe|monto|total|amount|saldo|debe|haber/i.test(c)
+      )
+      for (const col of colsImporte) {
+        const noNumericos = filas.filter(r => {
+          const v = r[col]
+          return v !== "" && isNaN(Number(String(v).replace(/[$.,\s]/g, "")))
+        }).length
+        if (noNumericos > 0) {
+          alertas.push(`Columna "${col}": ${noNumericos} valores no numéricos`)
+        }
+      }
+
+      // Detectar filas completamente vacías
+      const filasVacias = filas.filter(r => Object.values(r).every(v => v === "" || v === null)).length
+      if (filasVacias > 0) alertas.push(`${filasVacias} fila${filasVacias !== 1 ? "s" : ""} completamente vacía${filasVacias !== 1 ? "s" : ""}`)
+
+      // Muestras: primeras 3 filas, limitando a 5 columnas
+      const colsMuestra = columnas.slice(0, 5)
+      const muestras = filas.slice(0, 3).map(r => {
+        const m: Record<string, string> = {}
+        for (const c of colsMuestra) m[c] = String(r[c] ?? "")
+        return m
+      })
+
+      setPreview({ filas: filas.length, columnas, alertas, muestras })
+    } catch {
+      setPreview({ filas: 0, columnas: [], alertas: ["No se pudo leer el archivo — verificá que sea un Excel válido (.xlsx o .xls)"], muestras: [] })
+    } finally {
+      setLeyendo(false)
+    }
+  }
+
   return (
-    <div className="card">
-      <div className="text-2xs uppercase tracking-wider text-ink-500 mb-2">{label}</div>
-      <label className="btn btn-secondary cursor-pointer">
+    <div className="card space-y-3">
+      <div className="text-2xs uppercase tracking-wider text-ink-500">{label}</div>
+      <label className="btn btn-secondary cursor-pointer w-fit">
         <Upload size={14} />
         {file ? file.name : "Subir Excel"}
         <input
           type="file"
           accept=".xlsx,.xls"
           className="hidden"
-          onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
+          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
         />
       </label>
-      {file && (
-        <div className="mt-2 text-2xs text-ink-500 flex items-center gap-1">
-          <FileSpreadsheet size={11} /> {(file.size / 1024).toFixed(1)} KB
+
+      {leyendo && (
+        <div className="text-2xs text-ink-400 flex items-center gap-1.5 animate-pulse">
+          <FileSpreadsheet size={11} /> Analizando archivo…
+        </div>
+      )}
+
+      {preview && !leyendo && (
+        <div className="space-y-2">
+          {/* Resumen */}
+          <div className="flex items-center gap-3 text-2xs">
+            <span className={`font-semibold ${preview.filas === 0 ? "text-danger" : "text-ok"}`}>
+              {preview.filas === 0 ? "Sin datos" : `${preview.filas} filas`}
+            </span>
+            {preview.columnas.length > 0 && (
+              <span className="text-ink-400">{preview.columnas.length} columnas detectadas</span>
+            )}
+            {file && (
+              <span className="text-ink-400">{(file.size / 1024).toFixed(1)} KB</span>
+            )}
+          </div>
+
+          {/* Columnas detectadas */}
+          {preview.columnas.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {preview.columnas.slice(0, 8).map(c => (
+                <span key={c} className="text-2xs bg-ink-100 text-ink-600 px-1.5 py-0.5 rounded font-mono">
+                  {c}
+                </span>
+              ))}
+              {preview.columnas.length > 8 && (
+                <span className="text-2xs text-ink-400">+{preview.columnas.length - 8} más</span>
+              )}
+            </div>
+          )}
+
+          {/* Alertas */}
+          {preview.alertas.length > 0 && (
+            <div className="space-y-1">
+              {preview.alertas.map((a, i) => (
+                <div key={i} className="flex items-start gap-1.5 text-2xs text-warn bg-warn-light/50 px-2 py-1 rounded">
+                  <AlertCircle size={11} className="flex-shrink-0 mt-0.5" />
+                  {a}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Muestra de datos */}
+          {preview.muestras.length > 0 && preview.columnas.length > 0 && (
+            <details className="text-2xs">
+              <summary className="cursor-pointer text-ink-400 hover:text-ink-600 select-none">
+                Ver primeras filas
+              </summary>
+              <div className="mt-1.5 overflow-x-auto">
+                <table className="w-full text-2xs border border-ink-200 rounded">
+                  <thead className="bg-ink-50">
+                    <tr>
+                      {preview.columnas.slice(0, 5).map(c => (
+                        <th key={c} className="px-2 py-1 text-left text-ink-500 font-medium border-b border-ink-200 truncate max-w-[100px]">
+                          {c}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.muestras.map((m, i) => (
+                      <tr key={i} className="border-t border-ink-100">
+                        {preview.columnas.slice(0, 5).map(c => (
+                          <td key={c} className="px-2 py-1 text-ink-600 truncate max-w-[100px]" title={m[c]}>
+                            {m[c] || <span className="text-ink-300 italic">vacío</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
         </div>
       )}
     </div>

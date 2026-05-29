@@ -60,6 +60,7 @@ type MovGuardado = {
   fecha: string | null
   tipo_original: string
   comprobante_raw: string
+  clave_calculada: string | null
   importe_ars: number
   importe_usd: number
   moneda: string | null
@@ -112,6 +113,7 @@ export default function DetalleConciliacionPage() {
     origen: string
   }>>({})
   const [grupoConfig, setGrupoConfig] = useState<{ logo_url: string | null; nombre_display: string | null; color_primario: string }>({ logo_url: null, nombre_display: null, color_primario: "#1E3A5F" })
+  const [clavesAnteriores, setClavesAnteriores] = useState<Record<string, string>>({})
 
   useEffect(() => {
     async function cargar() {
@@ -126,6 +128,37 @@ export default function DetalleConciliacionPage() {
         .select("*")
         .eq("conciliacion_id", params.id)
         .order("fecha")
+
+      // Cargar claves del período anterior para detectar arrastres
+      const concActual = cab as any
+      const contraparteId = concActual?.contraparte_id
+      const periodoLabelActual = concActual?.periodo_label
+      let clavesAnteriores: Record<string, string> = {} // clave_calculada → periodo_label anterior
+
+      if (contraparteId) {
+        const { data: concAnterior } = await supabase
+          .from("conciliaciones")
+          .select("id, periodo_label")
+          .eq("contraparte_id", contraparteId)
+          .eq("estado", "aprobado")
+          .neq("id", params.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        if (concAnterior) {
+          const { data: movsAnteriores } = await supabase
+            .from("movimientos")
+            .select("clave_calculada")
+            .eq("conciliacion_id", concAnterior.id)
+            .neq("estado_conciliacion", "conciliado")
+            .not("clave_calculada", "is", null)
+          const periodoAnteriorLabel = concAnterior.periodo_label ?? "período anterior"
+          for (const m of movsAnteriores ?? []) {
+            if (m.clave_calculada) clavesAnteriores[m.clave_calculada] = periodoAnteriorLabel
+          }
+        }
+      }
 
       const { data: hist } = await supabase
         .from("conciliacion_historial")
@@ -197,6 +230,7 @@ export default function DetalleConciliacionPage() {
       setC(cab as unknown as Conciliacion)
       setPendientes((movs ?? []) as unknown as MovGuardado[])
       setHistorial((hist ?? []) as unknown as HistorialItem[])
+      setClavesAnteriores(clavesAnteriores)
       setLoading(false)
     }
     cargar()
@@ -868,7 +902,16 @@ export default function DetalleConciliacionPage() {
                       </td>
                       <td className="px-2 py-1">{m.fecha}</td>
                       <td className="px-2 py-1 truncate max-w-[160px]">{m.tipo_original}</td>
-                      <td className="px-2 py-1 font-mono">{m.comprobante_raw}</td>
+                      <td className="px-2 py-1 font-mono">
+                        <div className="flex items-center gap-1.5">
+                          {m.comprobante_raw}
+                          {m.clave_calculada && clavesAnteriores[m.clave_calculada] && (
+                            <span className="text-2xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-sans font-semibold whitespace-nowrap" title={`Ya estaba pendiente en ${clavesAnteriores[m.clave_calculada]}`}>
+                              ↩ {clavesAnteriores[m.clave_calculada]}
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-2 py-1 num text-right">{Number(m.importe_ars).toLocaleString("es-AR", { minimumFractionDigits: 2 })}</td>
                       <td className="px-2 py-1 num text-right">{Number(m.importe_usd).toLocaleString("es-AR", { minimumFractionDigits: 2 })}</td>
                     </tr>

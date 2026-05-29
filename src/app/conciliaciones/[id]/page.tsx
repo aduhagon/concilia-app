@@ -109,7 +109,7 @@ export default function DetalleConciliacionPage() {
     importe_ars: number
     importe_usd: number
     origen: string
-  }>>({}) // id → datos del movimiento
+  }>>({})
   const [grupoConfig, setGrupoConfig] = useState<{ logo_url: string | null; nombre_display: string | null; color_primario: string }>({ logo_url: null, nombre_display: null, color_primario: "#1E3A5F" })
 
   useEffect(() => {
@@ -126,14 +126,12 @@ export default function DetalleConciliacionPage() {
         .eq("conciliacion_id", params.id)
         .order("fecha")
 
-      // Cargar historial de estados
       const { data: hist } = await supabase
         .from("conciliacion_historial")
         .select("id, usuario_id, estado_anterior, estado_nuevo, accion, observacion, created_at, usuarios(nombre)")
         .eq("conciliacion_id", params.id)
         .order("created_at", { ascending: false })
 
-      // Usuario actual
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         const { data: u } = await supabase
@@ -144,7 +142,6 @@ export default function DetalleConciliacionPage() {
         if (u) setUsuarioActual(u)
       }
 
-      // Cargar config visual del grupo
       const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
       if (grupo) {
         const { data: cfg } = await supabase
@@ -155,7 +152,6 @@ export default function DetalleConciliacionPage() {
         if (cfg) setGrupoConfig(cfg)
       }
 
-      // Cargar matches agrupados
       const { data: agrupadosData } = await supabase
         .from("matches_agrupados")
         .select("id, tipo, movs_lado_n, mov_lado_1, total_lado_n_ars, total_lado_n_usd, importe_lado_1_ars, importe_lado_1_usd, diferencia_ars, diferencia_usd, score_confianza, estado")
@@ -163,7 +159,6 @@ export default function DetalleConciliacionPage() {
         .eq("estado", "aceptado")
       if (agrupadosData && agrupadosData.length > 0) {
         setMatchesAgrupados(agrupadosData)
-        // Cargar los datos de todos los movimientos involucrados
         const allMovIds: string[] = []
         for (const ma of agrupadosData) {
           allMovIds.push(...ma.movs_lado_n, ma.mov_lado_1)
@@ -177,7 +172,6 @@ export default function DetalleConciliacionPage() {
         setMovsDeAgrupados(movsMap)
       }
 
-      // Cargar firmas digitales
       const { data: firmasData } = await supabase
         .from("firmas_conciliacion")
         .select("tipo_firma, hash_contenido, firmado_en, usuario_id")
@@ -208,7 +202,6 @@ export default function DetalleConciliacionPage() {
   }, [params.id])
 
   async function calcularHashConciliacion(c: Conciliacion, pendientes: MovGuardado[]): Promise<string> {
-    // Hash del contenido firmado: incluye saldos, diferencia y resumen de pendientes
     const contenido = {
       id: c.id,
       saldos: {
@@ -233,7 +226,6 @@ export default function DetalleConciliacionPage() {
   async function ejecutarAccion(accion: "cerrado_operativo" | "aprobado" | "reabierto") {
     if (!c || !usuarioActual) return
 
-    // Para cierre y aprobación, exigir password
     const requierePassword = accion === "cerrado_operativo" || accion === "aprobado"
     if (requierePassword) {
       if (!password) {
@@ -245,7 +237,6 @@ export default function DetalleConciliacionPage() {
 
     setAccionando(true)
 
-    // Verificar password contra Supabase Auth
     let passwordVerified = false
     if (requierePassword) {
       const { data: { user } } = await supabase.auth.getUser()
@@ -285,7 +276,6 @@ export default function DetalleConciliacionPage() {
 
     await supabase.from("conciliaciones").update(updates).eq("id", c.id)
 
-    // Auditoría general
     await registrar(supabase, {
       accion: "conciliacion_estado",
       tabla_afectada: "conciliaciones",
@@ -295,7 +285,6 @@ export default function DetalleConciliacionPage() {
       observacion: observacion || undefined,
     })
 
-    // Registrar en historial
     await supabase.from("conciliacion_historial").insert({
       conciliacion_id: c.id,
       usuario_id: usuarioActual.id,
@@ -305,7 +294,6 @@ export default function DetalleConciliacionPage() {
       observacion: observacion || null,
     })
 
-    // Guardar firma digital para cierre y aprobación
     if (requierePassword && passwordVerified) {
       const hashContenido = await calcularHashConciliacion(c, pendientes)
       const userAgent = navigator.userAgent
@@ -321,7 +309,6 @@ export default function DetalleConciliacionPage() {
 
     setPassword("")
 
-    // Recargar
     const { data: cab } = await supabase
       .from("conciliaciones")
       .select("*, contrapartes(nombre, conciliador_id)")
@@ -340,13 +327,11 @@ export default function DetalleConciliacionPage() {
     setMostrarModalAprobacion(false)
     setMostrarModalReapertura(false)
 
-    // Enviar notificaciones según la acción
     const nombreContraparte = (cab as any)?.contrapartes?.nombre ?? ""
     const periodo = c.periodo_label ?? null
     const conciliadorId = (c as any).contrapartes?.conciliador_id ?? null
 
     if (accion === "cerrado_operativo") {
-      // Notificar a supervisores del grupo
       await supabase.rpc("crear_notificaciones_cierre", {
         p_conciliacion_id:   c.id,
         p_operativo_id:      usuarioActual.id,
@@ -355,7 +340,6 @@ export default function DetalleConciliacionPage() {
         p_periodo:           periodo,
       })
     } else if (accion === "aprobado" && conciliadorId) {
-      // Notificar al operativo que concilió
       await supabase.rpc("crear_notificacion_aprobacion", {
         p_conciliacion_id:   c.id,
         p_supervisor_id:     usuarioActual.id,
@@ -365,7 +349,6 @@ export default function DetalleConciliacionPage() {
         p_conciliador_id:    conciliadorId,
       })
     } else if (accion === "reabierto" && conciliadorId) {
-      // Notificar al operativo que se reabrió
       await supabase.rpc("crear_notificacion_reapertura", {
         p_conciliacion_id:   c.id,
         p_supervisor_id:     usuarioActual.id,
@@ -377,7 +360,6 @@ export default function DetalleConciliacionPage() {
       })
     }
 
-    // Mostrar banner de confirmación con paso siguiente
     if (accion === "cerrado_operativo") {
       setBannerConfirmacion({ tipo: "cierre", nombreContraparte })
       toast.show("✓ Conciliación cerrada y firmada", "ok")
@@ -395,7 +377,6 @@ export default function DetalleConciliacionPage() {
   if (loading) return <div className="text-sm text-ink-400 text-center py-8">Cargando...</div>
   if (!c) return <div className="text-sm text-error text-center py-8">No se encontró la conciliación</div>
 
-  // Mensajes de paso siguiente por tipo de acción
   const BANNER_CONFIG = {
     cierre: {
       color: "bg-ok-light border-ok/30",
@@ -423,11 +404,9 @@ export default function DetalleConciliacionPage() {
     },
   }
 
-  // Agrupar pendientes por categoría (status)
   const grupos = agruparPorStatus(pendientes)
   const dif = c.diferencia_final_ars ?? 0
   const ok = Math.abs(dif) < 1
-
 
   async function generarPDF() {
     if (!c) return
@@ -441,7 +420,6 @@ export default function DetalleConciliacionPage() {
       const colDerecha = W - margin
       let y = 0
 
-      // Extraer color primario del grupo
       const hexToRgb = (hex: string): [number,number,number] => {
         const r = parseInt(hex.slice(1,3),16)
         const g = parseInt(hex.slice(3,5),16)
@@ -454,11 +432,9 @@ export default function DetalleConciliacionPage() {
       const verdeOk: [number,number,number] = [26, 122, 74]
       const naranja: [number,number,number] = [212, 88, 10]
 
-      // Datos de sociedad y cuenta
       const sociedad = (c as any).cuentas_proveedor?.sociedades?.nombre ?? null
       const cuentaInterna = (c as any).cuentas_proveedor?.cuenta_interna ?? null
 
-      // Nombres de firmas desde historial
       const firmaCierre = historial.find(h => h.accion === "cerrado_operativo")
       const firmaAprobacion = historial.find(h => h.accion === "aprobado")
       const nombreCierre = (firmaCierre?.usuarios as any)?.nombre ?? c.firmado_por ?? "—"
@@ -483,14 +459,11 @@ export default function DetalleConciliacionPage() {
         texto(val[0], x, yy + 4, 8.5, false)
       }
 
-      // ── ENCABEZADO con logo ──
       doc.setFillColor(...colorPrimario)
       doc.rect(0, 0, W, 32, "F")
 
-      // Logo o texto
       if (grupoConfig.logo_url) {
         try {
-          // Intentar cargar imagen — si falla cae al texto
           const img = new Image()
           img.crossOrigin = "anonymous"
           await new Promise<void>((resolve, reject) => {
@@ -521,7 +494,6 @@ export default function DetalleConciliacionPage() {
 
       y = 40
 
-      // ── BANDA PROVEEDOR + SOCIEDAD ──
       doc.setFillColor(242, 244, 250)
       doc.rect(margin, y, W - margin * 2, 18, "F")
       doc.setDrawColor(...grisClarito)
@@ -530,7 +502,6 @@ export default function DetalleConciliacionPage() {
 
       texto(c.contrapartes?.nombre ?? "—", margin + 4, y + 7, 13, true, colorPrimario)
 
-      // Datos debajo del nombre
       const subInfo: string[] = []
       if (sociedad) subInfo.push(`Sociedad: ${sociedad}`)
       if (cuentaInterna) subInfo.push(`Cuenta: ${cuentaInterna}`)
@@ -538,14 +509,12 @@ export default function DetalleConciliacionPage() {
       if (c.periodo_label) subInfo.push(`Período: ${c.periodo_label}`)
       texto(subInfo.join("   ·   "), margin + 4, y + 13, 7.5, false, gris)
 
-      // TC arriba derecha
       if (c.tc_cierre && c.tc_cierre > 0) {
         texto("TC CIERRE", colDerecha - 2, y + 6, 6.5, false, gris, "right")
         texto(`$${c.tc_cierre.toLocaleString("es-AR", { minimumFractionDigits: 2 })}`, colDerecha - 2, y + 12, 9, true, colorPrimario, "right")
       }
       y += 24
 
-      // ── ESTADO Y FIRMAS ──
       if (y > 235) { doc.addPage(); y = 20 }
       y += 4
       lineaH(y, colorPrimario, 0.6)
@@ -566,7 +535,6 @@ export default function DetalleConciliacionPage() {
       texto(estadoLabel[c.estado] ?? c.estado.toUpperCase(), margin + 2, y + 0.5, 7, true, [255,255,255])
       y += 8
 
-      // Grilla de datos — 3 columnas
       const col1 = margin
       const col2 = margin + 58
       const col3 = margin + 116
@@ -592,7 +560,6 @@ export default function DetalleConciliacionPage() {
         y += 14
       }
 
-      // Hashes de firmas digitales
       if (firmas.length > 0) {
         texto("FIRMAS DIGITALES (HASH DE VERIFICACIÓN)", margin, y, 6.5, true, [80, 130, 100])
         y += 5
@@ -609,13 +576,11 @@ export default function DetalleConciliacionPage() {
         y += 4
       }
 
-      // ── SALDOS ──
       lineaH(y, colorPrimario, 0.6)
       y += 5
       texto("SALDOS", margin, y, 8, true, colorPrimario)
       y += 5
 
-      // Encabezados columnas — alineados a derecha con posición fija
       const xUSD = 145
       const xARS = colDerecha
 
@@ -650,26 +615,24 @@ export default function DetalleConciliacionPage() {
       lineaH(y, colorPrimario, 0.6)
       y += 7
 
-      // ── PENDIENTES ──
       if (pendientes.length > 0) {
         texto("COMPOSICIÓN DE LA DIFERENCIA", margin, y, 8, true, colorPrimario)
         y += 6
 
-        const grupos: Record<string, typeof pendientes> = {}
+        const gruposPDF: Record<string, typeof pendientes> = {}
         for (const m of pendientes) {
           const k = m.estado_conciliacion || "pendiente"
-          if (!grupos[k]) grupos[k] = []
-          grupos[k].push(m)
+          if (!gruposPDF[k]) gruposPDF[k] = []
+          gruposPDF[k].push(m)
         }
 
-        // Columnas fijas para pendientes
         const xOrigen = margin
         const xFecha = margin + 6
         const xTipo = margin + 24
         const xComp = margin + 72
         const xImporte = colDerecha
 
-        for (const [status, items] of Object.entries(grupos)) {
+        for (const [status, items] of Object.entries(gruposPDF)) {
           if (items.length === 0) continue
           const totalArs = items.reduce((a, m) => a + Number(m.importe_ars || 0), 0)
           const totalUsd = items.reduce((a, m) => a + Number(m.importe_usd || 0), 0)
@@ -685,7 +648,6 @@ export default function DetalleConciliacionPage() {
           )
           y += 9
 
-          // Encabezados columna
           doc.setFontSize(6)
           doc.setTextColor(...grisClarito)
           doc.text("O", xOrigen, y)
@@ -724,11 +686,9 @@ export default function DetalleConciliacionPage() {
         }
       }
 
-      // Pie de página
       lineaH(288, grisClarito, 0.2)
       texto(`Generado por Concilia · ${new Date().toLocaleString("es-AR")}`, W / 2, 293, 6.5, false, gris, "center")
 
-      // Descargar
       const nombreArchivo = [
         "conciliacion",
         c.contrapartes?.nombre ?? "proveedor",
@@ -746,14 +706,12 @@ export default function DetalleConciliacionPage() {
     }
   }
 
-  // Permisos según rol y estado
   const esOperativo = usuarioActual?.rol === "operativo"
   const esSupervisor = usuarioActual?.rol === "supervisor" || usuarioActual?.rol === "admin"
-  const puedeOperativoCerrar = (esOperativo || esSupervisor) && 
-  (c.estado === "en_proceso" || c.estado === "borrador" || 
+  const puedeOperativoCerrar = (esOperativo || esSupervisor) &&
+  (c.estado === "en_proceso" || c.estado === "borrador" ||
    c.estado === "finalizada" || c.estado === "reabierto" ||
    c.estado === "cerrado_operativo")
-
 
   const puedeSupervisorAprobar = esSupervisor && c.estado === "cerrado_operativo"
   const puedeSupervisorReabrir = esSupervisor && (c.estado === "cerrado_operativo" || c.estado === "aprobado")
@@ -801,6 +759,33 @@ export default function DetalleConciliacionPage() {
         </div>
       </div>
 
+      {/* ── NUEVO: Banner de diferencia con CTA ── */}
+      {!ok && (
+        <div className="card border-warn/30 bg-warn-light/40 flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle size={16} className="text-warn flex-shrink-0 mt-0.5" />
+            <div>
+              <div className="text-sm font-semibold text-warn">
+                Diferencia sin explicar: {Math.abs(dif).toLocaleString("es-AR", { minimumFractionDigits: 2 })} ARS
+              </div>
+              <div className="text-xs text-ink-600 mt-0.5">
+                {pendientes.length > 0
+                  ? `${pendientes.length} comprobante${pendientes.length !== 1 ? "s" : ""} pendiente${pendientes.length !== 1 ? "s" : ""} sin conciliar. Revisá la composición de la diferencia para entender el origen.`
+                  : "La diferencia entre saldos no está explicada por pendientes ni ajustes."}
+              </div>
+            </div>
+          </div>
+          {pendientes.length > 0 && (
+            <a
+              href="#composicion"
+              className="btn btn-secondary text-xs flex-shrink-0 text-warn border-warn/30 hover:bg-warn-light"
+            >
+              Ver pendientes <ArrowRight size={12} />
+            </a>
+          )}
+        </div>
+      )}
+
       {/* Datos generales */}
       <div className="card">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
@@ -811,7 +796,7 @@ export default function DetalleConciliacionPage() {
         </div>
       </div>
 
-      {/* Saldos USD + ARS en doble columna */}
+      {/* Saldos */}
       <div className="card">
         <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Saldos</div>
         <table className="w-full text-sm">
@@ -835,8 +820,8 @@ export default function DetalleConciliacionPage() {
         </table>
       </div>
 
-      {/* Composición de la diferencia (pendientes agrupados + ajustes) */}
-      <div className="card">
+      {/* Composición de la diferencia — id para anchor desde el banner */}
+      <div className="card" id="composicion">
         <div className="text-2xs uppercase tracking-wider text-ink-500 mb-3">Composición de la diferencia</div>
 
         {Object.entries(grupos).map(([status, items]) => {
@@ -890,7 +875,6 @@ export default function DetalleConciliacionPage() {
           )
         })}
 
-        {/* Ajustes manuales */}
         {(c.ajustes_manuales?.length ?? 0) > 0 && (
           <details className="border border-ink-200 rounded-md mb-2">
             <summary className="px-3 py-2 cursor-pointer hover:bg-ink-50 flex items-center justify-between text-sm">
@@ -932,7 +916,6 @@ export default function DetalleConciliacionPage() {
           <div className="text-sm text-ink-400 italic text-center py-4">Sin pendientes ni ajustes registrados</div>
         )}
 
-        {/* Total + control */}
         <div className={`mt-4 pt-3 border-t-2 border-ink-700 px-2 py-2 rounded ${ok ? "bg-accent-light" : "bg-amber-50"}`}>
           <div className="flex items-center justify-between text-sm font-medium">
             <span className="flex items-center gap-1">
@@ -946,7 +929,7 @@ export default function DetalleConciliacionPage() {
         </div>
       </div>
 
-      {/* ── MATCHES AGRUPADOS (NIVEL 4) ── */}
+      {/* Matches agrupados (Nivel 4) */}
       {matchesAgrupados.length > 0 && (
         <div className="card space-y-3">
           <div className="flex items-center justify-between">
@@ -979,7 +962,6 @@ export default function DetalleConciliacionPage() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {/* Lado N */}
                     <div className="border border-ink-200 rounded p-2 bg-white">
                       <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold mb-2">
                         {origenN === "compania" ? "COMPAÑÍA" : "CONTRAPARTE"} · {movsN.length} comprobantes
@@ -1000,7 +982,6 @@ export default function DetalleConciliacionPage() {
                       </div>
                     </div>
 
-                    {/* Lado 1 */}
                     <div className="border border-accent/30 rounded p-2 bg-accent/5">
                       <div className="text-2xs uppercase tracking-wider text-accent font-semibold mb-2">
                         {origen1 === "compania" ? "COMPAÑÍA" : "CONTRAPARTE"} · 1 movimiento
@@ -1034,7 +1015,7 @@ export default function DetalleConciliacionPage() {
         </div>
       )}
 
-      {/* ── ACCIONES DE CIERRE ── */}
+      {/* Acciones de cierre */}
       <div className="card space-y-4">
         <div className="flex items-center justify-between">
           <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold">Estado y firmas</div>
@@ -1046,7 +1027,6 @@ export default function DetalleConciliacionPage() {
           </button>
         </div>
 
-        {/* Firmas actuales */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs">
           <div>
             <div className="text-2xs text-ink-400 mb-1">Cerrado por operativo</div>
@@ -1074,7 +1054,6 @@ export default function DetalleConciliacionPage() {
           )}
         </div>
 
-        {/* Firmas digitales con hash */}
         {firmas.length > 0 && (
           <div className="border-t border-ink-200 pt-3 space-y-2">
             <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold flex items-center gap-1.5">
@@ -1106,7 +1085,6 @@ export default function DetalleConciliacionPage() {
           </div>
         )}
 
-        {/* Botones de acción */}
         <div className="flex items-center gap-3 pt-2 border-t border-ink-200">
           {puedeOperativoCerrar && (
             <button
@@ -1140,7 +1118,6 @@ export default function DetalleConciliacionPage() {
           )}
         </div>
 
-        {/* Historial de estados */}
         {mostrarHistorial && (
           <div className="border-t border-ink-200 pt-3 space-y-2">
             <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold mb-2">Log de cambios</div>

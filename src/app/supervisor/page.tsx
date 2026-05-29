@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase-client"
 import Link from "next/link"
 import {
   CheckCircle2, AlertCircle, Clock, TrendingUp,
-  Building2, Search, Download, Bell
+  Building2, Search, Download, Bell, Lock, ChevronDown, ChevronUp
 } from "lucide-react"
 import CategoriaBadge, { CAT_FREQ } from "@/components/CategoriaBadge"
 import { calcularEstado, tieneAlertaSemanal, compararUrgencia } from "@/lib/estado-cuenta"
@@ -31,6 +31,19 @@ type CuentaEstado = {
   alerta_semanal: boolean
 }
 
+type PeriodoAvance = {
+  id: string
+  label: string
+  anio: number
+  mes: number
+  estado: string
+  total: number
+  aprobadas: number
+  cerradas: number
+  en_proceso: number
+  pct_aprobado: number
+}
+
 const ESTADO_CONFIG = {
   conciliada: { label: "Conciliada", color: "bg-ok-light text-ok", dot: "bg-ok" },
   pendiente: { label: "Pendiente", color: "bg-warn-light text-warn", dot: "bg-warn" },
@@ -40,16 +53,13 @@ const ESTADO_CONFIG = {
 
 function formatFecha(iso: string | null): string {
   if (!iso) return "—"
-  const d = new Date(iso)
-  return d.toLocaleDateString("es-AR", { day: "numeric", month: "short" })
+  return new Date(iso).toLocaleDateString("es-AR", { day: "numeric", month: "short" })
 }
 
 function diasHasta(iso: string | null): number | null {
   if (!iso) return null
-  const hoy = new Date()
-  hoy.setHours(0, 0, 0, 0)
-  const fecha = new Date(iso)
-  return Math.ceil((fecha.getTime() - hoy.getTime()) / 86400000)
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
+  return Math.ceil((new Date(iso).getTime() - hoy.getTime()) / 86400000)
 }
 
 export default function SupervisorPage() {
@@ -61,14 +71,27 @@ export default function SupervisorPage() {
   const [busqueda, setBusqueda] = useState("")
   const [exportando, setExportando] = useState(false)
 
+  // Panel de períodos
+  const [periodos, setPeriodos] = useState<PeriodoAvance[]>([])
+  const [periodosExpanded, setPeriodosExpanded] = useState(true)
+  const [cerrandoPeriodo, setCerrandoPeriodo] = useState<string | null>(null)
+  const [confirmCierre, setConfirmCierre] = useState<PeriodoAvance | null>(null)
+
   useEffect(() => {
     async function cargar() {
-      const { data, error } = await supabase
-        .rpc("get_cuentas_supervision")
+      const [{ data: cuentasData, error }, { data: periodosData }] = await Promise.all([
+        supabase.rpc("get_cuentas_supervision"),
+        supabase
+          .from("periodos")
+          .select("id, label, anio, mes, estado")
+          .order("anio", { ascending: false })
+          .order("mes", { ascending: false })
+          .limit(12),
+      ])
 
-      if (error) { console.error("get_cuentas_supervision:", error); setLoading(false); return }
+      if (error) { console.error("get_cuentas_supervision:", error) }
 
-      const items: CuentaEstado[] = (data ?? []).map((c: any) => ({
+      const items: CuentaEstado[] = (cuentasData ?? []).map((c: any) => ({
         id: c.id,
         nombre: c.nombre,
         cuit: c.cuit,
@@ -90,13 +113,59 @@ export default function SupervisorPage() {
         }),
         alerta_semanal: tieneAlertaSemanal(c.categoria, c.prox_alerta),
       }))
-
       items.sort(compararUrgencia)
       setCuentas(items)
+
+      // Cargar avance por período
+      if (periodosData && periodosData.length > 0) {
+        const avances = await Promise.all(
+          periodosData.map(async (p: any) => {
+            const { data: av } = await supabase
+              .rpc("get_avance_periodo", { p_periodo_id: p.id })
+            const a = av?.[0] ?? { total: 0, aprobadas: 0, cerradas: 0, en_proceso: 0, pct_aprobado: 0 }
+            return {
+              id: p.id,
+              label: p.label,
+              anio: p.anio,
+              mes: p.mes,
+              estado: p.estado,
+              total: Number(a.total),
+              aprobadas: Number(a.aprobadas),
+              cerradas: Number(a.cerradas),
+              en_proceso: Number(a.en_proceso),
+              pct_aprobado: Number(a.pct_aprobado ?? 0),
+            } as PeriodoAvance
+          })
+        )
+        // Solo mostrar períodos que tienen al menos 1 conciliación
+        setPeriodos(avances.filter(p => p.total > 0))
+      }
+
       setLoading(false)
     }
     cargar()
   }, [])
+
+  async function ejecutarCierrePeriodo(periodo: PeriodoAvance) {
+    setCerrandoPeriodo(periodo.id)
+    try {
+      const { data, error } = await supabase
+        .rpc("cerrar_periodo", { p_periodo_id: periodo.id })
+      if (error) throw error
+      if (data?.ok) {
+        setPeriodos(prev => prev.map(p =>
+          p.id === periodo.id ? { ...p, estado: "cerrado" } : p
+        ))
+      } else {
+        alert("No se pudo cerrar el período: " + (data?.error ?? "error desconocido"))
+      }
+    } catch (e: any) {
+      alert("Error: " + e.message)
+    } finally {
+      setCerrandoPeriodo(null)
+      setConfirmCierre(null)
+    }
+  }
 
   const kpis = {
     conciliadas: cuentas.filter(c => c.estado === "conciliada").length,
@@ -107,7 +176,6 @@ export default function SupervisorPage() {
     total: cuentas.length,
   }
   const pct = kpis.total > 0 ? Math.round((kpis.conciliadas / kpis.total) * 100) : 0
-
   const sociedades = [...new Set(cuentas.map(c => c.sociedad).filter(Boolean))] as string[]
 
   const filtradas = cuentas.filter(c => {
@@ -127,10 +195,7 @@ export default function SupervisorPage() {
     setExportando(true)
     try {
       const XLSX = await import("xlsx")
-
       const wb = XLSX.utils.book_new()
-
-      // === HOJA 1: Resumen del mes ===
       const resumenData = [
         ["TABLERO DE CIERRE — " + mesLabel.toUpperCase()],
         ["Generado el " + hoy.toLocaleString("es-AR")],
@@ -151,21 +216,15 @@ export default function SupervisorPage() {
         ["Búsqueda",  busqueda        || "—"],
         ["Cuentas en este reporte", filtradas.length],
       ]
-
       const wsResumen = XLSX.utils.aoa_to_sheet(resumenData)
       wsResumen["!cols"] = [{ wch: 28 }, { wch: 12 }, { wch: 14 }]
       XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen")
 
-      // === HOJA 2: Detalle de cuentas (con filtros activos) ===
       const ESTADO_LABEL: Record<string, string> = {
-        conciliada: "Conciliada",
-        pendiente: "Pendiente",
-        vencida: "Vencida",
-        sin_iniciar: "Sin iniciar",
+        conciliada: "Conciliada", pendiente: "Pendiente",
+        vencida: "Vencida", sin_iniciar: "Sin iniciar",
       }
-
       const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0)
-
       const headers = [
         "Cuenta", "CUIT", "Categoría", "Sociedad",
         "Estado", "Alerta semanal",
@@ -173,16 +232,12 @@ export default function SupervisorPage() {
         "Última conciliación", "Última diferencia ARS",
         "Total conciliaciones",
       ]
-
       const filas = filtradas.map(c => {
         const dias = c.prox_conciliacion
           ? Math.ceil((new Date(c.prox_conciliacion).getTime() - hoy0.getTime()) / 86400000)
           : null
         return [
-          c.nombre,
-          c.cuit ?? "",
-          c.categoria ?? "",
-          c.sociedad ?? "",
+          c.nombre, c.cuit ?? "", c.categoria ?? "", c.sociedad ?? "",
           ESTADO_LABEL[c.estado] ?? c.estado,
           c.alerta_semanal ? "SÍ" : "No",
           c.prox_conciliacion ? new Date(c.prox_conciliacion).toLocaleDateString("es-AR") : "",
@@ -192,18 +247,14 @@ export default function SupervisorPage() {
           c.total_conciliaciones,
         ]
       })
-
       const wsDetalle = XLSX.utils.aoa_to_sheet([headers, ...filas])
       wsDetalle["!cols"] = [
         { wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 20 },
-        { wch: 16 }, { wch: 14 },
-        { wch: 18 }, { wch: 14 },
-        { wch: 20 }, { wch: 22 },
-        { wch: 18 },
+        { wch: 16 }, { wch: 14 }, { wch: 18 }, { wch: 14 },
+        { wch: 20 }, { wch: 22 }, { wch: 18 },
       ]
       XLSX.utils.book_append_sheet(wb, wsDetalle, "Cuentas")
 
-      // === HOJA 3: Solo vencidas (si hay) ===
       const vencidas = filtradas.filter(c => c.estado === "vencida")
       if (vencidas.length > 0) {
         const filasVenc = vencidas.map(c => [
@@ -220,7 +271,6 @@ export default function SupervisorPage() {
         XLSX.utils.book_append_sheet(wb, wsVenc, "Vencidas")
       }
 
-      // Descargar
       const fecha = hoy.toISOString().slice(0, 10)
       XLSX.writeFile(wb, `tablero_${mesLabel.replace(/\s+/g, "_").toLowerCase()}_${fecha}.xlsx`)
     } catch (e) {
@@ -302,13 +352,100 @@ export default function SupervisorPage() {
             {pct}<span className="text-base font-normal">%</span>
           </div>
           <div className="h-1.5 bg-ink-100 rounded-full overflow-hidden mt-2">
-            <div
-              className="h-full bg-accent rounded-full transition-all duration-700"
-              style={{ width: `${pct}%` }}
-            />
+            <div className="h-full bg-accent rounded-full transition-all duration-700" style={{ width: `${pct}%` }} />
           </div>
         </div>
       </div>
+
+      {/* ── NUEVO: Panel de cierre de períodos ── */}
+      {periodos.length > 0 && (
+        <div className="panel overflow-hidden">
+          <button
+            onClick={() => setPeriodosExpanded(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-ink-50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Lock size={14} className="text-ink-500" />
+              <span className="text-sm font-semibold text-ink-700">Cierre de períodos</span>
+              <span className="text-2xs text-ink-400 font-normal">
+                — {periodos.filter(p => p.estado === "cerrado").length} de {periodos.length} cerrados
+              </span>
+            </div>
+            {periodosExpanded
+              ? <ChevronUp size={15} className="text-ink-400" />
+              : <ChevronDown size={15} className="text-ink-400" />
+            }
+          </button>
+
+          {periodosExpanded && (
+            <div className="border-t border-ink-100 divide-y divide-ink-100">
+              {periodos.map(p => {
+                const pctP = p.total > 0 ? Math.round((p.aprobadas / p.total) * 100) : 0
+                const estaCerrado = p.estado === "cerrado"
+                const listo = p.aprobadas === p.total && p.total > 0
+                const cerrandoEste = cerrandoPeriodo === p.id
+
+                return (
+                  <div key={p.id} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="text-sm font-semibold">{p.label}</span>
+                          {estaCerrado ? (
+                            <span className="text-2xs bg-ok-light text-ok px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                              <Lock size={10} /> Cerrado
+                            </span>
+                          ) : (
+                            <span className="text-2xs bg-ink-100 text-ink-500 px-2 py-0.5 rounded-full">
+                              Abierto
+                            </span>
+                          )}
+                        </div>
+                        {/* Barra de progreso del período */}
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-1.5 bg-ink-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-700 ${listo ? "bg-ok" : "bg-accent"}`}
+                              style={{ width: `${pctP}%` }}
+                            />
+                          </div>
+                          <span className={`text-2xs font-mono font-semibold w-10 text-right ${listo ? "text-ok" : "text-ink-600"}`}>
+                            {pctP}%
+                          </span>
+                        </div>
+                        {/* Desglose */}
+                        <div className="flex items-center gap-3 mt-1.5 text-2xs text-ink-400">
+                          <span className="text-ok font-semibold">{p.aprobadas} aprobadas</span>
+                          {p.cerradas > 0 && <span className="text-warn">{p.cerradas} pdte. aprobación</span>}
+                          {p.en_proceso > 0 && <span>{p.en_proceso} en proceso</span>}
+                          <span>/ {p.total} total</span>
+                        </div>
+                      </div>
+
+                      {/* Acción */}
+                      {!estaCerrado && (
+                        <button
+                          onClick={() => setConfirmCierre(p)}
+                          disabled={cerrandoEste}
+                          className={`btn text-xs flex-shrink-0 flex items-center gap-1.5 disabled:opacity-40 ${
+                            listo
+                              ? "btn-primary"
+                              : "btn-secondary text-ink-500"
+                          }`}
+                          title={listo ? "Todas las cuentas aprobadas — listo para cerrar" : "Hay cuentas sin aprobar"}
+                        >
+                          <Lock size={12} />
+                          {cerrandoEste ? "Cerrando…" : "Cerrar período"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -489,6 +626,54 @@ export default function SupervisorPage() {
           </table>
         </div>
       )}
+
+      {/* Modal de confirmación de cierre de período */}
+      {confirmCierre && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-6 max-w-sm w-full shadow-xl space-y-4">
+            <div className="text-base font-semibold flex items-center gap-2">
+              <Lock size={16} className="text-accent" />
+              Cerrar período: {confirmCierre.label}
+            </div>
+            <div className="text-sm text-ink-600 space-y-2">
+              <p>
+                Este período quedará marcado como <strong>cerrado</strong> y la acción quedará
+                registrada en la auditoría.
+              </p>
+              {confirmCierre.aprobadas < confirmCierre.total && (
+                <div className="bg-warn-light border border-warn/20 px-3 py-2 rounded text-warn text-xs">
+                  ⚠ Hay {confirmCierre.total - confirmCierre.aprobadas} cuenta{confirmCierre.total - confirmCierre.aprobadas !== 1 ? "s" : ""} sin aprobar.
+                  Podés cerrar igual, pero quedará registrado en el log.
+                </div>
+              )}
+              <div className="bg-ink-50 rounded px-3 py-2 text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-ink-500">Aprobadas</span>
+                  <span className="font-semibold text-ok">{confirmCierre.aprobadas} / {confirmCierre.total}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-ink-500">Avance</span>
+                  <span className="font-semibold">{confirmCierre.pct_aprobado}%</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setConfirmCierre(null)} className="btn btn-secondary">
+                Cancelar
+              </button>
+              <button
+                onClick={() => ejecutarCierrePeriodo(confirmCierre)}
+                disabled={cerrandoPeriodo === confirmCierre.id}
+                className="btn btn-primary disabled:opacity-40"
+              >
+                <Lock size={13} />
+                {cerrandoPeriodo === confirmCierre.id ? "Cerrando…" : "Confirmar cierre"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

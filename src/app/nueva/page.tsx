@@ -3,6 +3,7 @@
 export const dynamic = "force-dynamic"
 
 import { useEffect, useState, useMemo } from "react"
+import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase-client"
 import { registrar } from "@/lib/auditoria"
 import { leerExcel, normalizarCompania, normalizarContraparte, exportarResultadoExcel, obtenerInfoArchivo } from "@/lib/excel-parser"
@@ -56,8 +57,10 @@ export default function NuevaConciliacionPage() {
   const procesando = etapa !== "idle" && etapa !== "listo" && etapa !== "error"
   const [error, setError] = useState<string | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [conciliacionGuardadaId, setConciliacionGuardadaId] = useState<string | null>(null)
 
   const toast = useToast()
+  const router = useRouter()
 
   const [tab, setTab] = useState<"papel" | "sugerencias" | "clasificacion" | "ajustes" | "movimientos">("papel")
   const [sugerenciasRechazadas, setSugerenciasRechazadas] = useState<Set<string>>(new Set())
@@ -367,21 +370,19 @@ export default function NuevaConciliacionPage() {
       const pendientesCount = resultado.movimientos.filter((m) => m.estado === "pendiente").length
       const cantAgrupados = sugAceptadas.length
       const msgAgrupados = cantAgrupados > 0 ? ` + ${cantAgrupados} match(es) agrupado(s)` : ""
-      toast.show(`✓ Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""}) — ${pendientesCount} pendientes${msgAgrupados}`, "ok")
-
-      setTimeout(() => {
-        clearContraparteId()
-        clearCuentaProveedorId()
-        clearPeriodo()
-        clearSaldos()
-        clearClasif()
-        clearAjustes()
-        clearFirma()
-        clearAprob()
-        setArchivoCmp(null)
-        setArchivoCont(null)
-        setResultado(null)
-      }, 500)
+      // Mostrar banner con CTA al detalle
+      setConciliacionGuardadaId(nueva.id)
+      clearContraparteId()
+      clearCuentaProveedorId()
+      clearPeriodo()
+      clearSaldos()
+      clearClasif()
+      clearAjustes()
+      clearFirma()
+      clearAprob()
+      setArchivoCmp(null)
+      setArchivoCont(null)
+      setResultado(null)
     } finally {
       setGuardando(false)
     }
@@ -514,6 +515,35 @@ export default function NuevaConciliacionPage() {
           </button>
         )}
       </div>
+
+      {/* Banner post-guardado con CTA al detalle */}
+      {conciliacionGuardadaId && (
+        <div className="card bg-ok-light/50 border-ok/30 flex items-center justify-between gap-4 py-4 px-5">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 size={20} className="text-ok flex-shrink-0" />
+            <div>
+              <div className="text-sm font-semibold text-ok">Conciliación guardada correctamente</div>
+              <div className="text-xs text-ink-600 mt-0.5">Podés ir al detalle para cerrarla y enviarla al supervisor.</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => {
+                setConciliacionGuardadaId(null)
+              }}
+              className="btn btn-ghost text-ink-400 text-xs"
+            >
+              Nueva conciliación
+            </button>
+            <button
+              onClick={() => router.push(`/conciliaciones/${conciliacionGuardadaId}`)}
+              className="btn btn-primary"
+            >
+              Ver detalle →
+            </button>
+          </div>
+        </div>
+      )}
 
       <StepperHorizontal pasoActivo={pasoActivo} paso1Listo={paso1Listo} paso2Listo={paso2Listo} paso3Listo={paso3Listo} hayResultado={!!resultado} />
 

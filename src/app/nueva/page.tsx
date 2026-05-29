@@ -12,7 +12,7 @@ import type {
   PlantillaProveedor, ResultadoConciliacion,
   SaldosBilaterales, AjusteManual, ClasificacionPendientes, PapelConciliacion,
 } from "@/types"
-import { Upload, Play, Download, AlertCircle, CheckCircle2, FileSpreadsheet, Trash2, Save } from "lucide-react"
+import { Upload, Play, Download, AlertCircle, CheckCircle2, FileSpreadsheet, Trash2, Save, Loader2 } from "lucide-react"
 import ProgresoEjecucion, { type EtapaProceso } from "@/components/ProgresoEjecucion"
 import TablaConFiltros from "@/components/TablaConFiltros"
 import EditorSaldos from "@/components/EditorSaldos"
@@ -39,7 +39,6 @@ export default function NuevaConciliacionPage() {
   const [cuentasProveedor, setCuentasProveedor] = useState<CuentaProveedor[]>([])
   const [cuentaProveedorId, setCuentaProveedorId, clearCuentaProveedorId] = usePersistedState<string>("nueva-cuenta-proveedor-id", "")
   const [contraparteId, setContraparteId, clearContraparteId] = usePersistedState<string>("nueva-contraparte-id", "")
-  // Persistir todo lo crítico del usuario
   const [periodoLabel, setPeriodoLabel, clearPeriodo] = usePersistedState<string>("nueva-periodo", "")
   const [saldos, setSaldos, clearSaldos] = usePersistedState<SaldosBilaterales>("nueva-saldos", SALDOS_VACIOS)
   const [clasificacion, setClasificacion, clearClasif] = usePersistedState<ClasificacionPendientes>("nueva-clasif", {})
@@ -56,6 +55,7 @@ export default function NuevaConciliacionPage() {
   const [filasContraparte, setFilasContraparte] = useState<number | undefined>(undefined)
   const procesando = etapa !== "idle" && etapa !== "listo" && etapa !== "error"
   const [error, setError] = useState<string | null>(null)
+  const [guardando, setGuardando] = useState(false)
 
   const toast = useToast()
 
@@ -64,7 +64,6 @@ export default function NuevaConciliacionPage() {
   const [sugerenciasAceptadas, setSugerenciasAceptadas] = useState<Set<string>>(new Set())
   const [tabMovs, setTabMovs] = useState<"conciliados" | "dif_cambio" | "dif_real" | "pend_cmp" | "pend_cont" | "ajustes_propios" | "no_clas">("pend_cmp")
 
-  // Última conciliación de este proveedor (para botón "Copiar de mes anterior")
   type UltimaConc = {
     periodo_label: string | null
     saldo_final_compania_ars: number | null
@@ -89,7 +88,6 @@ export default function NuevaConciliacionPage() {
       setCuentaProveedorId("")
       return
     }
-    // Cargar cuentas por sociedad del proveedor
     supabase
       .from("cuentas_proveedor")
       .select("id, cuenta_interna, descripcion, sociedad_id, sociedades(nombre)")
@@ -103,7 +101,6 @@ export default function NuevaConciliacionPage() {
           cuenta_interna: c.cuenta_interna,
           descripcion: c.descripcion,
         })))
-        // Si solo hay una cuenta, seleccionarla automáticamente
         if (data?.length === 1) setCuentaProveedorId(data[0].id)
         else setCuentaProveedorId("")
       })
@@ -121,10 +118,8 @@ export default function NuevaConciliacionPage() {
         })
       }
     })
-    // Cargar la última conciliación se hace en su propio useEffect
   }, [contraparteId])
 
-  // useEffect separado para última conciliación (depende de cuenta + período)
   useEffect(() => {
     if (contraparteId) cargarUltimaConciliacionVigente()
     else setUltimaConc(null)
@@ -135,7 +130,6 @@ export default function NuevaConciliacionPage() {
       setUltimaConc(null)
       return
     }
-    // Usar la función SQL que filtra por proveedor + cuenta + período de referencia
     const { data } = await supabase.rpc("obtener_ultima_conciliacion_vigente", {
       p_contraparte_id: contraparteId,
       p_cuenta_proveedor_id: cuentaProveedorId || null,
@@ -144,7 +138,6 @@ export default function NuevaConciliacionPage() {
     const fila = Array.isArray(data) && data.length > 0 ? data[0] : null
     setUltimaConc(fila as UltimaConc | null)
 
-    // Autocompletar saldos iniciales si están vacíos
     if (fila && saldos.inicial_compania_ars === 0 && saldos.inicial_contraparte_ars === 0) {
       setSaldos({
         ...saldos,
@@ -157,7 +150,6 @@ export default function NuevaConciliacionPage() {
     }
   }
 
-  // Re-aplicar saldos de la última conciliación aprobada (por si el operativo modificó algo y quiere volver al automático)
   function copiarDeAnterior() {
     if (!ultimaConc) return
     setSaldos({
@@ -180,25 +172,20 @@ export default function NuevaConciliacionPage() {
     setEtapa("leyendo_compania")
     setError(null)
     try {
-      // Etapa 1: leer Excel compañía
       const cmpRaw = await leerExcel(archivoCmp)
       setFilasCompania(cmpRaw.filas.length)
       ;(window as any).__cmpRawFilas = cmpRaw.filas.length
 
-      // Etapa 2: leer Excel contraparte
       setEtapa("leyendo_contraparte")
       const contRaw = await leerExcel(archivoCont)
       setFilasContraparte(contRaw.filas.length)
       ;(window as any).__contRawFilas = contRaw.filas.length
 
-      // Etapa 3: normalizar movimientos
       setEtapa("normalizando")
-      // Ceder el hilo un tick para que React renderice el cambio de etapa
       await new Promise(r => setTimeout(r, 0))
       const movsCmp = normalizarCompania(cmpRaw.filas, plantilla.mapeo_compania, "c")
       const movsCont = normalizarContraparte(contRaw.filas, plantilla.mapeo_contraparte, "x")
 
-      // Etapa 4: conciliar
       setEtapa("conciliando")
       await new Promise(r => setTimeout(r, 0))
       const r = conciliar([...movsCmp, ...movsCont], plantilla)
@@ -214,196 +201,190 @@ export default function NuevaConciliacionPage() {
 
   async function guardar() {
     if (!resultado || !papel) return
-    const cont = contrapartes.find((c) => c.id === contraparteId)
-    const cmpRawFilas: number = (window as any).__cmpRawFilas ?? 0
-    const contRawFilas: number = (window as any).__contRawFilas ?? 0
+    setGuardando(true)
+    try {
+      const cont = contrapartes.find((c) => c.id === contraparteId)
+      const cmpRawFilas: number = (window as any).__cmpRawFilas ?? 0
+      const contRawFilas: number = (window as any).__contRawFilas ?? 0
 
-    // 1. Insertar la cabecera de la conciliación
-    const { data: nueva, error: errSave } = await supabase
-      .from("conciliaciones")
-      .insert({
-        contraparte_id: contraparteId,
-        cuenta_proveedor_id: cuentaProveedorId || null,
-        periodo_label: periodoLabel,
-        saldo_inicial_compania_ars: saldos.inicial_compania_ars,
-        saldo_inicial_compania_usd: saldos.inicial_compania_usd,
-        saldo_inicial_contraparte_ars: saldos.inicial_contraparte_ars,
-        saldo_inicial_contraparte_usd: saldos.inicial_contraparte_usd,
-        saldo_final_compania_ars: saldos.final_compania_ars,
-        saldo_final_compania_usd: saldos.final_compania_usd,
-        saldo_final_contraparte_ars: saldos.final_contraparte_ars,
-        saldo_final_contraparte_usd: saldos.final_contraparte_usd,
-        tc_cierre: saldos.tc_cierre,
-        diferencia_final_ars: papel.diferencia_sin_explicar_ars,
-        ajustes_manuales: ajustes,
-        clasificacion_pendientes: clasificacion,
-        firmado_por: firmadoPor || null,
-        firmado_fecha: firmadoPor ? new Date().toISOString().slice(0, 10) : null,
-        aprobado_por: aprobadoPor || null,
-        aprobado_fecha: aprobadoPor ? new Date().toISOString().slice(0, 10) : null,
-        estado: "finalizada",
-        resumen: resultado.resumen,
-      })
-      .select()
-      .single()
+      const { data: nueva, error: errSave } = await supabase
+        .from("conciliaciones")
+        .insert({
+          contraparte_id: contraparteId,
+          cuenta_proveedor_id: cuentaProveedorId || null,
+          periodo_label: periodoLabel,
+          saldo_inicial_compania_ars: saldos.inicial_compania_ars,
+          saldo_inicial_compania_usd: saldos.inicial_compania_usd,
+          saldo_inicial_contraparte_ars: saldos.inicial_contraparte_ars,
+          saldo_inicial_contraparte_usd: saldos.inicial_contraparte_usd,
+          saldo_final_compania_ars: saldos.final_compania_ars,
+          saldo_final_compania_usd: saldos.final_compania_usd,
+          saldo_final_contraparte_ars: saldos.final_contraparte_ars,
+          saldo_final_contraparte_usd: saldos.final_contraparte_usd,
+          tc_cierre: saldos.tc_cierre,
+          diferencia_final_ars: papel.diferencia_sin_explicar_ars,
+          ajustes_manuales: ajustes,
+          clasificacion_pendientes: clasificacion,
+          firmado_por: firmadoPor || null,
+          firmado_fecha: firmadoPor ? new Date().toISOString().slice(0, 10) : null,
+          aprobado_por: aprobadoPor || null,
+          aprobado_fecha: aprobadoPor ? new Date().toISOString().slice(0, 10) : null,
+          estado: "finalizada",
+          resumen: resultado.resumen,
+        })
+        .select()
+        .single()
 
-    if (errSave || !nueva) {
-      alert("Error al guardar: " + (errSave?.message ?? "desconocido"))
-      return
-    }
-
-    // Auditoría: nueva conciliación creada
-    await registrar(supabase, {
-      accion: "conciliacion_creada",
-      tabla_afectada: "conciliaciones",
-      registro_id: nueva.id,
-      valor_nuevo: { contraparte_id: nueva.contraparte_id, periodo_label: nueva.periodo_label },
-    })
-
-    // 2. Guardar pendientes Y los movimientos que pertenecen a matches agrupados aceptados
-    const pendientes = resultado.movimientos.filter((m) => m.estado === "pendiente")
-
-    // Identificar movimientos involucrados en sugerencias agrupadas aceptadas
-    const sugAceptadas = (resultado.sugerencias_agrupadas ?? []).filter(s => sugerenciasAceptadas.has(s.id_unico))
-    const idsUnicosAgrupados = new Set<string>()
-    for (const s of sugAceptadas) {
-      s.movs_lado_n.forEach(id => idsUnicosAgrupados.add(id))
-      idsUnicosAgrupados.add(s.mov_lado_1)
-    }
-    const movsAgrupados = resultado.movimientos.filter(m => idsUnicosAgrupados.has(m.id_unico))
-
-    // Mapa idUnico (temporal) → UUID real de la DB (lo llenamos al insertar)
-    const mapIdUnicoAReal: Record<string, string> = {}
-
-    const todosAGuardar = [...pendientes, ...movsAgrupados]
-
-    if (todosAGuardar.length > 0) {
-      const filas = todosAGuardar.map((m) => ({
-        conciliacion_id: nueva.id,
-        origen: m.origen,
-        fecha: m.fecha?.toISOString().slice(0, 10),
-        tipo_original: m.tipo_original,
-        tipo_normalizado: m.tipo_normalizado,
-        comprobante_raw: m.comprobante_raw,
-        clave_calculada: m.clave_calculada,
-        importe_ars: m.importe_ars,
-        importe_usd: m.importe_usd,
-        moneda: m.moneda,
-        descripcion: m.descripcion,
-        // Pendientes mantienen su estado clasificado; agrupados aceptados quedan como "conciliado"
-        estado_conciliacion: m.estado === "conciliado"
-          ? "conciliado"
-          : (clasificacion[m.id_unico] ?? "pendiente"),
-        match_id: null,
-      }))
-
-      const { data: movsInsertados, error: errMovs } = await supabase
-        .from("movimientos")
-        .insert(filas)
-        .select("id")
-
-      if (errMovs) {
-        toast.show(`Guardado parcial: falló el detalle (${errMovs.message})`, "error")
+      if (errSave || !nueva) {
+        alert("Error al guardar: " + (errSave?.message ?? "desconocido"))
         return
       }
 
-      // Mapear id_unico → UUID real (en orden de inserción)
-      if (movsInsertados) {
-        todosAGuardar.forEach((m, idx) => {
-          if (movsInsertados[idx]) mapIdUnicoAReal[m.id_unico] = movsInsertados[idx].id
-        })
+      await registrar(supabase, {
+        accion: "conciliacion_creada",
+        tabla_afectada: "conciliaciones",
+        registro_id: nueva.id,
+        valor_nuevo: { contraparte_id: nueva.contraparte_id, periodo_label: nueva.periodo_label },
+      })
+
+      const pendientes = resultado.movimientos.filter((m) => m.estado === "pendiente")
+
+      const sugAceptadas = (resultado.sugerencias_agrupadas ?? []).filter(s => sugerenciasAceptadas.has(s.id_unico))
+      const idsUnicosAgrupados = new Set<string>()
+      for (const s of sugAceptadas) {
+        s.movs_lado_n.forEach(id => idsUnicosAgrupados.add(id))
+        idsUnicosAgrupados.add(s.mov_lado_1)
       }
-    }
+      const movsAgrupados = resultado.movimientos.filter(m => idsUnicosAgrupados.has(m.id_unico))
+      const mapIdUnicoAReal: Record<string, string> = {}
+      const todosAGuardar = [...pendientes, ...movsAgrupados]
 
-    // 2.b. Guardar matches agrupados aceptados (después de tener UUIDs reales)
-    if (sugAceptadas.length > 0) {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        const usuarioId = user?.id ?? null
-        const ahoraIso = new Date().toISOString()
-
-        const filasAgrupadas = sugAceptadas
-          .map(s => {
-            const movsN_uuids = s.movs_lado_n.map(id => mapIdUnicoAReal[id]).filter(Boolean)
-            const movUno_uuid = mapIdUnicoAReal[s.mov_lado_1]
-            if (movsN_uuids.length === 0 || !movUno_uuid) return null
-            return {
-              conciliacion_id: nueva.id,
-              tipo: s.tipo,
-              movs_lado_n: movsN_uuids,
-              mov_lado_1: movUno_uuid,
-              total_lado_n_ars: s.total_lado_n_ars,
-              total_lado_n_usd: s.total_lado_n_usd,
-              importe_lado_1_ars: s.importe_lado_1_ars,
-              importe_lado_1_usd: s.importe_lado_1_usd,
-              diferencia_ars: s.diferencia_ars,
-              diferencia_usd: s.diferencia_usd,
-              estado: "aceptado" as const,
-              score_confianza: s.score_confianza,
-              aceptado_por: usuarioId,
-              aceptado_en: ahoraIso,
-            }
-          })
-          .filter(Boolean)
-
-        if (filasAgrupadas.length > 0) {
-          await supabase.from("matches_agrupados").insert(filasAgrupadas as any)
-        }
-      } catch (e) {
-        console.error("Error guardando matches agrupados:", e)
-        // no bloquear el guardado principal
-      }
-    }
-
-    // 3. Guardar hash de archivos fuente (trazabilidad / cadena de custodia)
-    if (archivoCmp && archivoCont) {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        const [infoCmp, infoCont] = await Promise.all([
-          obtenerInfoArchivo(archivoCmp, cmpRawFilas),
-          obtenerInfoArchivo(archivoCont, contRawFilas),
-        ])
-        await supabase.from("archivos_fuente").insert([
-          { conciliacion_id: nueva.id, usuario_id: user?.id, origen: "compania", ...infoCmp, filas_procesadas: pendientes.filter(m => m.origen === "compania").length },
-          { conciliacion_id: nueva.id, usuario_id: user?.id, origen: "contraparte", ...infoCont, filas_procesadas: pendientes.filter(m => m.origen === "contraparte").length },
-        ])
-      } catch { /* no bloquear si falla el hash */ }
-    }
-
-    // 4. Guardar log de decisiones del motor
-    if (resultado.decisiones && resultado.decisiones.length > 0) {
-      try {
-        const decisionesDb = resultado.decisiones.slice(0, 500).map(d => ({
+      if (todosAGuardar.length > 0) {
+        const filas = todosAGuardar.map((m) => ({
           conciliacion_id: nueva.id,
-          nivel_match: d.nivel_match,
-          criterio: d.criterio,
-          score_confianza: d.score_confianza,
-          clave_compania: d.clave_compania ?? null,
-          clave_contraparte: d.clave_contraparte ?? null,
-          candidatos_evaluados: d.candidatos_evaluados,
-          candidatos_descartados: d.candidatos_descartados ?? null,
+          origen: m.origen,
+          fecha: m.fecha?.toISOString().slice(0, 10),
+          tipo_original: m.tipo_original,
+          tipo_normalizado: m.tipo_normalizado,
+          comprobante_raw: m.comprobante_raw,
+          clave_calculada: m.clave_calculada,
+          importe_ars: m.importe_ars,
+          importe_usd: m.importe_usd,
+          moneda: m.moneda,
+          descripcion: m.descripcion,
+          estado_conciliacion: m.estado === "conciliado"
+            ? "conciliado"
+            : (clasificacion[m.id_unico] ?? "pendiente"),
+          match_id: null,
         }))
-        await supabase.from("motor_decisiones").insert(decisionesDb)
-      } catch { /* no bloquear si falla el log */ }
-    }
 
-    const cantAgrupados = sugAceptadas.length
-    const msgAgrupados = cantAgrupados > 0 ? ` + ${cantAgrupados} match(es) agrupado(s)` : ""
-    toast.show(`✓ Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""}) — ${pendientes.length} pendientes${msgAgrupados}`, "ok")
-    // Limpiar el borrador después de guardar exitoso
-    setTimeout(() => {
-      clearContraparteId()
-      clearCuentaProveedorId()
-      clearPeriodo()
-      clearSaldos()
-      clearClasif()
-      clearAjustes()
-      clearFirma()
-      clearAprob()
-      setArchivoCmp(null)
-      setArchivoCont(null)
-      setResultado(null)
-    }, 500)
+        const { data: movsInsertados, error: errMovs } = await supabase
+          .from("movimientos")
+          .insert(filas)
+          .select("id")
+
+        if (errMovs) {
+          toast.show(`Guardado parcial: falló el detalle (${errMovs.message})`, "error")
+          return
+        }
+
+        if (movsInsertados) {
+          todosAGuardar.forEach((m, idx) => {
+            if (movsInsertados[idx]) mapIdUnicoAReal[m.id_unico] = movsInsertados[idx].id
+          })
+        }
+      }
+
+      if (sugAceptadas.length > 0) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser()
+          const usuarioId = user?.id ?? null
+          const ahoraIso = new Date().toISOString()
+
+          const filasAgrupadas = sugAceptadas
+            .map(s => {
+              const movsN_uuids = s.movs_lado_n.map(id => mapIdUnicoAReal[id]).filter(Boolean)
+              const movUno_uuid = mapIdUnicoAReal[s.mov_lado_1]
+              if (movsN_uuids.length === 0 || !movUno_uuid) return null
+              return {
+                conciliacion_id: nueva.id,
+                tipo: s.tipo,
+                movs_lado_n: movsN_uuids,
+                mov_lado_1: movUno_uuid,
+                total_lado_n_ars: s.total_lado_n_ars,
+                total_lado_n_usd: s.total_lado_n_usd,
+                importe_lado_1_ars: s.importe_lado_1_ars,
+                importe_lado_1_usd: s.importe_lado_1_usd,
+                diferencia_ars: s.diferencia_ars,
+                diferencia_usd: s.diferencia_usd,
+                estado: "aceptado" as const,
+                score_confianza: s.score_confianza,
+                aceptado_por: usuarioId,
+                aceptado_en: ahoraIso,
+              }
+            })
+            .filter(Boolean)
+
+          if (filasAgrupadas.length > 0) {
+            await supabase.from("matches_agrupados").insert(filasAgrupadas as any)
+          }
+        } catch (e) {
+          console.error("Error guardando matches agrupados:", e)
+        }
+      }
+
+      if (archivoCmp && archivoCont) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser()
+          const [infoCmp, infoCont] = await Promise.all([
+            obtenerInfoArchivo(archivoCmp, cmpRawFilas),
+            obtenerInfoArchivo(archivoCont, contRawFilas),
+          ])
+          const pendientesLocal = resultado.movimientos.filter((m) => m.estado === "pendiente")
+          await supabase.from("archivos_fuente").insert([
+            { conciliacion_id: nueva.id, usuario_id: user?.id, origen: "compania", ...infoCmp, filas_procesadas: pendientesLocal.filter(m => m.origen === "compania").length },
+            { conciliacion_id: nueva.id, usuario_id: user?.id, origen: "contraparte", ...infoCont, filas_procesadas: pendientesLocal.filter(m => m.origen === "contraparte").length },
+          ])
+        } catch { /* no bloquear si falla el hash */ }
+      }
+
+      if (resultado.decisiones && resultado.decisiones.length > 0) {
+        try {
+          const decisionesDb = resultado.decisiones.slice(0, 500).map(d => ({
+            conciliacion_id: nueva.id,
+            nivel_match: d.nivel_match,
+            criterio: d.criterio,
+            score_confianza: d.score_confianza,
+            clave_compania: d.clave_compania ?? null,
+            clave_contraparte: d.clave_contraparte ?? null,
+            candidatos_evaluados: d.candidatos_evaluados,
+            candidatos_descartados: d.candidatos_descartados ?? null,
+          }))
+          await supabase.from("motor_decisiones").insert(decisionesDb)
+        } catch { /* no bloquear si falla el log */ }
+      }
+
+      const pendientesCount = resultado.movimientos.filter((m) => m.estado === "pendiente").length
+      const cantAgrupados = sugAceptadas.length
+      const msgAgrupados = cantAgrupados > 0 ? ` + ${cantAgrupados} match(es) agrupado(s)` : ""
+      toast.show(`✓ Conciliación guardada (${cont?.nombre ?? ""} ${periodoLabel || ""}) — ${pendientesCount} pendientes${msgAgrupados}`, "ok")
+
+      setTimeout(() => {
+        clearContraparteId()
+        clearCuentaProveedorId()
+        clearPeriodo()
+        clearSaldos()
+        clearClasif()
+        clearAjustes()
+        clearFirma()
+        clearAprob()
+        setArchivoCmp(null)
+        setArchivoCont(null)
+        setResultado(null)
+      }, 500)
+    } finally {
+      setGuardando(false)
+    }
   }
 
   function descargar() {
@@ -411,7 +392,6 @@ export default function NuevaConciliacionPage() {
     const cont = contrapartes.find((c) => c.id === contraparteId)
     const cuenta = cuentasProveedor.find(c => c.id === cuentaProveedorId)
 
-    // Mapear sugerencias agrupadas aceptadas
     const movsPorIdUnico = new Map(resultado.movimientos.map(m => [m.id_unico, m]))
     const matchesAgrupadosExport = (resultado.sugerencias_agrupadas ?? [])
       .filter(s => sugerenciasAceptadas.has(s.id_unico))
@@ -445,7 +425,6 @@ export default function NuevaConciliacionPage() {
       periodoLabel,
       firmadoPor,
       aprobadoPor,
-      // Nuevos campos
       sociedad: cuenta?.sociedad_nombre,
       cuentaInterna: cuenta?.cuenta_interna,
       fechaCreacion: new Date().toISOString().slice(0, 10),
@@ -483,7 +462,6 @@ export default function NuevaConciliacionPage() {
   const sinClasif = pendientes.filter((m) => !clasificacion[m.id_unico]).length
   const contraparteName = contrapartes.find((c) => c.id === contraparteId)?.nombre
 
-  // Limpiar todo el borrador (después de guardar exitosamente o por acción del usuario)
   function limpiarBorrador() {
     clearContraparteId()
     clearCuentaProveedorId()
@@ -499,23 +477,20 @@ export default function NuevaConciliacionPage() {
     toast.show("Borrador limpiado", "info")
   }
 
-  // Atajos globales (Ctrl+S guardar, ? help)
   useShortcuts(
     [
       {
         key: "s", ctrl: true, description: "Guardar conciliación",
         handler: () => {
-          if (resultado && papel) guardar()
+          if (resultado && papel && !guardando) guardar()
         },
       },
     ],
     !!resultado
   )
 
-  // Detectar si hay un borrador en progreso (cualquier campo crítico tiene valor)
   const hayBorrador = !!(periodoLabel || saldos.final_compania_ars !== 0 || saldos.tc_cierre !== 0 || ajustes.length > 0 || Object.keys(clasificacion).length > 0)
 
-  // Calcular paso activo para el stepper
   const paso1Listo = !!(plantilla && !reglasFaltantes && !mapeoIncompleto && cuentaProveedorId)
   const paso2Listo = paso1Listo && !!(periodoLabel)
   const paso3Listo = paso2Listo && !!(archivoCmp && archivoCont)
@@ -540,7 +515,6 @@ export default function NuevaConciliacionPage() {
         )}
       </div>
 
-      {/* Stepper horizontal */}
       <StepperHorizontal pasoActivo={pasoActivo} paso1Listo={paso1Listo} paso2Listo={paso2Listo} paso3Listo={paso3Listo} hayResultado={!!resultado} />
 
       <section className="card">
@@ -555,7 +529,6 @@ export default function NuevaConciliacionPage() {
             <option key={c.id} value={c.id}>{c.nombre}</option>
           ))}
         </select>
-        {/* Selector de cuenta por sociedad */}
         {contraparteId && cuentasProveedor.length > 0 && (
           <div className="mt-3">
             <label className="label">Sociedad / Cuenta corriente *</label>
@@ -598,7 +571,6 @@ export default function NuevaConciliacionPage() {
             <h2 className={`h-section ${paso2Listo ? "text-ink-900" : "text-ink-700"}`}>Período y saldos</h2>
           </div>
 
-          {/* Aviso de saldo autocompletado */}
           {ultimaConc && (
             <div className="card bg-ok-light/40 border-ok/30 flex items-start gap-2">
               <CheckCircle2 size={14} className="text-ok flex-shrink-0 mt-0.5" />
@@ -656,7 +628,6 @@ export default function NuevaConciliacionPage() {
         </div>
       )}
 
-
       {error && (
         <div className="card border-red-200 bg-red-50">
           <div className="flex items-start gap-2 text-error">
@@ -680,8 +651,15 @@ export default function NuevaConciliacionPage() {
               )}
             </div>
             <div className="flex gap-2">
-              <button onClick={guardar} className="btn btn-secondary">
-                <CheckCircle2 size={14} /> Guardar
+              <button
+                onClick={guardar}
+                disabled={guardando}
+                className="btn btn-secondary disabled:opacity-60"
+              >
+                {guardando
+                  ? <><Loader2 size={14} className="animate-spin" /> Guardando…</>
+                  : <><CheckCircle2 size={14} /> Guardar</>
+                }
               </button>
               <button onClick={descargar} className="btn btn-primary">
                 <Download size={14} /> Descargar Excel
@@ -741,7 +719,6 @@ export default function NuevaConciliacionPage() {
               rechazadas={sugerenciasRechazadas}
               aceptadas={sugerenciasAceptadas}
               onAceptar={(id) => {
-                // Marcar movimientos como conciliados localmente
                 const sug = resultado.sugerencias_agrupadas.find(s => s.id_unico === id)
                 if (!sug) return
                 const idsN = new Set(sug.movs_lado_n)
@@ -752,7 +729,6 @@ export default function NuevaConciliacionPage() {
                   }
                 }
                 setSugerenciasAceptadas(new Set([...sugerenciasAceptadas, id]))
-                // Forzar re-render
                 setResultado({ ...resultado })
                 toast.show(`Match agrupado aceptado (${sug.movs_lado_n.length} ↔ 1)`, "ok")
               }}
@@ -910,10 +886,6 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
   )
 }
 
-// ============================================================
-// Componente: Vista de sugerencias agrupadas (Nivel 4)
-// ============================================================
-
 function SugerenciasAgrupadasView({
   sugerencias,
   movimientos,
@@ -1048,7 +1020,6 @@ function SugerenciaCard({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* Lado N */}
         <div className="border border-ink-200 rounded-md p-2 bg-ink-50">
           <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold mb-2">
             {s.origen_n === "compania" ? "COMPAÑÍA" : "CONTRAPARTE"} · {movsN.length} comprobantes
@@ -1069,7 +1040,6 @@ function SugerenciaCard({
           </div>
         </div>
 
-        {/* Lado 1 */}
         <div className="border border-accent/30 rounded-md p-2 bg-accent/5">
           <div className="text-2xs uppercase tracking-wider text-accent font-semibold mb-2">
             {s.origen_1 === "compania" ? "COMPAÑÍA" : "CONTRAPARTE"} · 1 movimiento
@@ -1090,7 +1060,6 @@ function SugerenciaCard({
         </div>
       </div>
 
-      {/* Diferencia */}
       <div className="mt-3 flex items-center justify-between text-2xs">
         <span className="text-ink-500">Diferencia:</span>
         <span className={`font-mono font-semibold ${Math.abs(s.diferencia_ars) < 1 ? "text-ok" : "text-warn"}`}>

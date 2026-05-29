@@ -114,6 +114,12 @@ export default function DetalleConciliacionPage() {
   }>>({})
   const [grupoConfig, setGrupoConfig] = useState<{ logo_url: string | null; nombre_display: string | null; color_primario: string }>({ logo_url: null, nombre_display: null, color_primario: "#1E3A5F" })
   const [clavesAnteriores, setClavesAnteriores] = useState<Record<string, string>>({})
+  const [reclamosActivos, setReclamosActivos] = useState<Record<string, string>>({}) // movimiento_id → reclamo id
+  const [modalReclamo, setModalReclamo] = useState<{ movId: string; comprobante: string; importe: number } | null>(null)
+  const [reclamoDesc, setReclamoDesc] = useState("")
+  const [reclamoFecha, setReclamoFecha] = useState("")
+  const [reclamoPrioridad, setReclamoPrioridad] = useState("normal")
+  const [guardandoReclamo, setGuardandoReclamo] = useState(false)
 
   useEffect(() => {
     async function cargar() {
@@ -231,6 +237,19 @@ export default function DetalleConciliacionPage() {
       setPendientes((movs ?? []) as unknown as MovGuardado[])
       setHistorial((hist ?? []) as unknown as HistorialItem[])
       setClavesAnteriores(clavesAnteriores)
+
+      // Cargar reclamos activos de esta conciliación
+      const { data: reclamosData } = await supabase
+        .from("reclamos")
+        .select("id, movimiento_id")
+        .eq("conciliacion_id", params.id)
+        .in("estado", ["abierto", "en_seguimiento"])
+      const reclamosMap: Record<string, string> = {}
+      for (const r of reclamosData ?? []) {
+        if (r.movimiento_id) reclamosMap[r.movimiento_id] = r.id
+      }
+      setReclamosActivos(reclamosMap)
+
       setLoading(false)
     }
     cargar()
@@ -413,6 +432,46 @@ export default function DetalleConciliacionPage() {
     }
 
     setAccionando(false)
+  }
+
+  async function crearReclamo() {
+    if (!modalReclamo || !c || !usuarioActual) return
+    setGuardandoReclamo(true)
+    try {
+      const { data: grupo } = await supabase
+        .from("grupos_trabajo").select("id").limit(1).single()
+      if (!grupo) return
+
+      const { data: nuevo } = await supabase
+        .from("reclamos")
+        .insert({
+          grupo_id: grupo.id,
+          conciliacion_id: c.id,
+          movimiento_id: modalReclamo.movId,
+          contraparte_id: (c as any).contrapartes?.id ?? c.id,
+          descripcion: reclamoDesc,
+          importe_ars: modalReclamo.importe,
+          fecha_limite: reclamoFecha || null,
+          prioridad: reclamoPrioridad,
+          estado: "abierto",
+          creado_por: usuarioActual.id,
+        })
+        .select("id")
+        .single()
+
+      if (nuevo) {
+        setReclamosActivos(prev => ({ ...prev, [modalReclamo.movId]: nuevo.id }))
+        toast.show("Reclamo registrado", "ok")
+      }
+    } catch (e) {
+      toast.show("Error al registrar reclamo", "error")
+    } finally {
+      setGuardandoReclamo(false)
+      setModalReclamo(null)
+      setReclamoDesc("")
+      setReclamoFecha("")
+      setReclamoPrioridad("normal")
+    }
   }
 
   if (loading) return <div className="text-sm text-ink-400 text-center py-8">Cargando...</div>
@@ -890,6 +949,7 @@ export default function DetalleConciliacionPage() {
                     <th className="text-left px-2 py-1">Comprobante</th>
                     <th className="text-right px-2 py-1">ARS</th>
                     <th className="text-right px-2 py-1">USD</th>
+                    <th className="px-2 py-1"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -914,6 +974,18 @@ export default function DetalleConciliacionPage() {
                       </td>
                       <td className="px-2 py-1 num text-right">{Number(m.importe_ars).toLocaleString("es-AR", { minimumFractionDigits: 2 })}</td>
                       <td className="px-2 py-1 num text-right">{Number(m.importe_usd).toLocaleString("es-AR", { minimumFractionDigits: 2 })}</td>
+                      <td className="px-2 py-1">
+                        {reclamosActivos[m.id] ? (
+                          <span className="text-2xs text-warn font-semibold">⚑ En reclamo</span>
+                        ) : (
+                          <button
+                            onClick={() => setModalReclamo({ movId: m.id, comprobante: m.comprobante_raw, importe: Number(m.importe_ars) })}
+                            className="text-2xs text-ink-400 hover:text-warn border border-ink-200 hover:border-warn/40 px-1.5 py-0.5 rounded transition-colors"
+                          >
+                            + Reclamar
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {items.length > 100 && (
@@ -1312,6 +1384,66 @@ export default function DetalleConciliacionPage() {
               <button onClick={() => { setMostrarModalReapertura(false); setCausaReapertura("") }} className="btn btn-secondary">Cancelar</button>
               <button onClick={() => ejecutarAccion("reabierto")} disabled={accionando || !causaReapertura} className="btn btn-secondary text-danger disabled:opacity-40">
                 <Unlock size={13} /> {accionando ? "Reabriendo…" : "Reabrir"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal crear reclamo */}
+      {modalReclamo && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-xl space-y-4">
+            <div className="text-base font-semibold flex items-center gap-2">
+              <AlertCircle size={16} className="text-warn" /> Registrar reclamo
+            </div>
+            <p className="text-sm text-ink-600">
+              Comprobante: <span className="font-mono font-semibold">{modalReclamo.comprobante}</span>
+              {" · "}{Math.abs(modalReclamo.importe).toLocaleString("es-AR", { minimumFractionDigits: 2 })} ARS
+            </p>
+            <div>
+              <label className="label">Descripción del reclamo *</label>
+              <textarea
+                value={reclamoDesc}
+                onChange={e => setReclamoDesc(e.target.value)}
+                className="input w-full h-20 resize-none"
+                placeholder="Qué se está reclamando y a quién…"
+                autoFocus
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Fecha límite</label>
+                <input
+                  type="date"
+                  value={reclamoFecha}
+                  onChange={e => setReclamoFecha(e.target.value)}
+                  className="input w-full"
+                  min={new Date().toISOString().slice(0, 10)}
+                />
+              </div>
+              <div>
+                <label className="label">Prioridad</label>
+                <select
+                  value={reclamoPrioridad}
+                  onChange={e => setReclamoPrioridad(e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="baja">Baja</option>
+                  <option value="normal">Normal</option>
+                  <option value="alta">Alta</option>
+                  <option value="critica">Crítica</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setModalReclamo(null)} className="btn btn-secondary">Cancelar</button>
+              <button
+                onClick={crearReclamo}
+                disabled={guardandoReclamo || !reclamoDesc.trim()}
+                className="btn btn-primary disabled:opacity-40"
+              >
+                {guardandoReclamo ? "Guardando…" : "Registrar reclamo"}
               </button>
             </div>
           </div>

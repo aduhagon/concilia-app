@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase-client"
 import Link from "next/link"
 import {
   CheckCircle2, AlertCircle, Clock, TrendingUp,
-  Building2, Search, Download, Bell, Lock, ChevronDown, ChevronUp
+  Building2, Search, Download, Bell, Lock, ChevronDown, ChevronUp, ArrowRight
 } from "lucide-react"
 import CategoriaBadge, { CAT_FREQ } from "@/components/CategoriaBadge"
 import { calcularEstado, tieneAlertaSemanal, compararUrgencia } from "@/lib/estado-cuenta"
@@ -29,6 +29,21 @@ type CuentaEstado = {
   ultima_diferencia: number | null
   estado: "conciliada" | "pendiente" | "vencida" | "sin_iniciar"
   alerta_semanal: boolean
+}
+
+type ReclamoActivo = {
+  id: string
+  conciliacion_id: string
+  contraparte_nombre: string
+  descripcion: string
+  importe_ars: number
+  estado: string
+  prioridad: string
+  fecha_limite: string | null
+  dias_para_vencer: number | null
+  escalado: boolean
+  responsable_nombre: string | null
+  created_at: string
 }
 
 type PeriodoAvance = {
@@ -75,11 +90,13 @@ export default function SupervisorPage() {
   const [periodos, setPeriodos] = useState<PeriodoAvance[]>([])
   const [periodosExpanded, setPeriodosExpanded] = useState(true)
   const [cerrandoPeriodo, setCerrandoPeriodo] = useState<string | null>(null)
+  const [reclamos, setReclamos] = useState<ReclamoActivo[]>([])
+  const [reclamosExpanded, setReclamosExpanded] = useState(true)
   const [confirmCierre, setConfirmCierre] = useState<PeriodoAvance | null>(null)
 
   useEffect(() => {
     async function cargar() {
-      const [{ data: cuentasData, error }, { data: periodosData }] = await Promise.all([
+      const [{ data: cuentasData, error }, { data: periodosData }, { data: reclamosData }] = await Promise.all([
         supabase.rpc("get_cuentas_supervision"),
         supabase
           .from("periodos")
@@ -87,6 +104,7 @@ export default function SupervisorPage() {
           .order("anio", { ascending: false })
           .order("mes", { ascending: false })
           .limit(12),
+        supabase.rpc("get_reclamos_activos"),
       ])
 
       if (error) { console.error("get_cuentas_supervision:", error) }
@@ -140,6 +158,8 @@ export default function SupervisorPage() {
         // Solo mostrar períodos que tienen al menos 1 conciliación
         setPeriodos(avances.filter(p => p.total > 0))
       }
+
+      if (reclamosData) setReclamos(reclamosData as ReclamoActivo[])
 
       setLoading(false)
     }
@@ -440,6 +460,108 @@ export default function SupervisorPage() {
                       )}
                     </div>
                   </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Panel de reclamos activos */}
+      {reclamos.length > 0 && (
+        <div className="panel overflow-hidden">
+          <button
+            onClick={() => setReclamosExpanded(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-ink-50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <AlertCircle size={14} className="text-warn" />
+              <span className="text-sm font-semibold text-ink-700">Reclamos activos</span>
+              <span className="text-2xs font-normal bg-warn-light text-warn px-2 py-0.5 rounded-full">
+                {reclamos.length}
+              </span>
+              {reclamos.filter(r => r.escalado).length > 0 && (
+                <span className="text-2xs font-normal bg-danger-light text-danger px-2 py-0.5 rounded-full">
+                  {reclamos.filter(r => r.escalado).length} escalado{reclamos.filter(r => r.escalado).length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            {reclamosExpanded
+              ? <ChevronUp size={15} className="text-ink-400" />
+              : <ChevronDown size={15} className="text-ink-400" />
+            }
+          </button>
+
+          {reclamosExpanded && (
+            <div className="border-t border-ink-100 divide-y divide-ink-100">
+              {reclamos.map(r => {
+                const dias = r.dias_para_vencer
+                const slaColor = r.escalado ? "text-danger"
+                  : dias === null ? "text-ink-400"
+                  : dias < 0 ? "text-danger"
+                  : dias <= 2 ? "text-warn"
+                  : "text-ok"
+                const slaBg = r.escalado ? "bg-danger-light"
+                  : dias === null ? "bg-ink-50"
+                  : dias < 0 ? "bg-danger-light"
+                  : dias <= 2 ? "bg-warn-light"
+                  : "bg-ok-light"
+                const prioridadColor: Record<string, string> = {
+                  critica: "bg-danger-light text-danger",
+                  alta: "bg-warn-light text-warn",
+                  normal: "bg-ink-100 text-ink-500",
+                  baja: "bg-ink-50 text-ink-400",
+                }
+
+                return (
+                  <Link
+                    key={r.id}
+                    href={`/conciliaciones/${r.conciliacion_id}`}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-ink-50 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        r.escalado ? "bg-danger" :
+                        dias !== null && dias < 0 ? "bg-danger" :
+                        dias !== null && dias <= 2 ? "bg-warn" : "bg-ok"
+                      }`} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold truncate">{r.contraparte_nombre}</span>
+                          <span className={`text-2xs font-semibold px-1.5 py-0.5 rounded ${prioridadColor[r.prioridad] ?? "bg-ink-100 text-ink-500"}`}>
+                            {r.prioridad}
+                          </span>
+                          {r.escalado && (
+                            <span className="text-2xs font-semibold bg-danger-light text-danger px-1.5 py-0.5 rounded">
+                              ⬆ Escalado
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-2xs text-ink-500 mt-0.5 truncate">{r.descripcion}</div>
+                        {r.responsable_nombre && (
+                          <div className="text-2xs text-ink-400 mt-0.5">
+                            Responsable: {r.responsable_nombre}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="text-right hidden md:block">
+                        <div className="text-2xs text-ink-400">Importe</div>
+                        <div className="text-xs font-mono font-semibold text-warn">
+                          ${Math.abs(r.importe_ars).toLocaleString("es-AR")}
+                        </div>
+                      </div>
+                      <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full ${slaBg} ${slaColor}`}>
+                        {r.escalado ? "Escalado" :
+                          dias === null ? "Sin fecha" :
+                          dias < 0 ? `Venció hace ${Math.abs(dias)}d` :
+                          dias === 0 ? "Vence hoy" :
+                          `${dias}d restantes`}
+                      </span>
+                      <ArrowRight size={13} className="text-ink-300 group-hover:text-accent transition-colors" />
+                    </div>
+                  </Link>
                 )
               })}
             </div>

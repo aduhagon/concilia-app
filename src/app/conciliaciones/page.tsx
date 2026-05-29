@@ -80,6 +80,19 @@ function agrupar(items: ConciliacionRow[]): SociedadAgrupada[] {
     }))
 }
 
+// ── Formatea diferencia con signo y color ──
+// Positivo (+): compañía tiene más saldo que contraparte → naranja
+// Negativo (−): compañía tiene menos → rojo
+// Cero: verde
+function fmtDif(dif: number | null): { texto: string; color: string } {
+  if (dif === null) return { texto: "—", color: "text-ink-400" }
+  if (Math.abs(dif) < 1) return { texto: "✓ $0", color: "text-ok" }
+  const signo = dif > 0 ? "+" : "−"
+  const abs = Math.abs(dif).toLocaleString("es-AR")
+  const color = dif > 0 ? "text-warn" : "text-danger"
+  return { texto: `${signo}$${abs}`, color }
+}
+
 export default function HistorialPage() {
   const { usuario } = useUser()
   const [items, setItems] = useState<ConciliacionRow[]>([])
@@ -225,7 +238,7 @@ export default function HistorialPage() {
                       <div className="text-sm font-bold">{soc.sociedad_nombre}</div>
                       <div className="text-2xs text-ink-400">
                         {soc.proveedores.length} proveedor{soc.proveedores.length !== 1 ? "es" : ""} ·{" "}
-                        {soc.proveedores.reduce((acc, p) => acc + p.total, 0)} conciliacion{soc.proveedores.reduce((acc, p) => acc + p.total, 0) !== 1 ? "es" : ""}
+                        {soc.proveedores.reduce((acc, p) => acc + p.total, 0)} conciliación{soc.proveedores.reduce((acc, p) => acc + p.total, 0) !== 1 ? "es" : ""}
                       </div>
                     </div>
                   </div>
@@ -238,6 +251,7 @@ export default function HistorialPage() {
                       const todasConcs = prov.cuentas.flatMap(c => c.conciliaciones)
                       const ultimaDif = todasConcs[0]?.diferencia_final_ars ?? null
                       const ultimaOk = ultimaDif !== null && Math.abs(ultimaDif) < 1
+                      const difFmt = fmtDif(ultimaDif)
 
                       return (
                         <div key={keyProv}>
@@ -260,8 +274,8 @@ export default function HistorialPage() {
                               {ultimaDif !== null && (
                                 <div className="text-right">
                                   <div className="text-2xs text-ink-400">Última diferencia</div>
-                                  <div className={`text-xs font-mono font-semibold ${ultimaOk ? "text-ok" : "text-warn"}`}>
-                                    {ultimaOk ? "✓ $0" : `$${Math.abs(ultimaDif).toLocaleString("es-AR")}`}
+                                  <div className={`text-xs font-mono font-semibold ${difFmt.color}`}>
+                                    {difFmt.texto}
                                   </div>
                                 </div>
                               )}
@@ -285,6 +299,7 @@ export default function HistorialPage() {
                                   <div className="space-y-1 pl-10">
                                     {cuenta.conciliaciones.map(c => {
                                       const ok = c.diferencia_final_ars !== null && Math.abs(c.diferencia_final_ars) < 1
+                                      const cDifFmt = fmtDif(c.diferencia_final_ars)
                                       return (
                                         <Link
                                           key={c.id}
@@ -308,8 +323,8 @@ export default function HistorialPage() {
                                           <div className="flex items-center gap-3">
                                             <div className="text-right">
                                               <div className="text-2xs text-ink-400">Diferencia</div>
-                                              <div className={`text-xs font-mono font-semibold ${ok ? "text-ok" : "text-warn"}`}>
-                                                {ok ? "✓ $0" : `$${Math.abs(c.diferencia_final_ars ?? 0).toLocaleString("es-AR")}`}
+                                              <div className={`text-xs font-mono font-semibold ${cDifFmt.color}`}>
+                                                {cDifFmt.texto}
                                               </div>
                                             </div>
                                             <ChevronRight size={13} className="text-ink-300 group-hover:text-accent transition-colors flex-shrink-0" />

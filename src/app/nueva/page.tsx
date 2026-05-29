@@ -549,38 +549,64 @@ export default function NuevaConciliacionPage() {
 
       <section className="card">
         <PasoTitulo num="1" titulo="Proveedor y cuenta" completado={paso1Listo} />
-        <select
-          value={contraparteId}
-          onChange={(e) => setContraparteId(e.target.value)}
-          className="input"
-        >
-          <option value="">— elegir proveedor —</option>
-          {contrapartes.map((c) => (
-            <option key={c.id} value={c.id}>{c.nombre}</option>
-          ))}
-        </select>
-        {contraparteId && cuentasProveedor.length > 0 && (
-          <div className="mt-3">
-            <label className="label">Sociedad / Cuenta corriente *</label>
+
+        {/* Estado vacío: sin proveedores asignados */}
+        {contrapartes.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 py-8 text-center">
+            <div className="w-12 h-12 rounded-full bg-ink-100 flex items-center justify-center">
+              <AlertCircle size={22} className="text-ink-400" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-ink-700">No tenés cuentas asignadas todavía</div>
+              <div className="text-xs text-ink-500 mt-1 max-w-xs">
+                Para empezar a conciliar, tu supervisor tiene que asignarte como conciliador de al menos una cuenta.
+              </div>
+            </div>
+            <div className="text-xs text-ink-400 bg-ink-50 border border-ink-200 rounded-md px-4 py-3 max-w-xs">
+              <strong className="text-ink-600">¿Qué hacer?</strong>
+              <ol className="mt-1.5 space-y-1 text-left list-decimal list-inside">
+                <li>Contactá a tu supervisor</li>
+                <li>Pedile que te asigne en Plantillas → tu proveedor → campo Conciliador</li>
+                <li>Volvé a esta pantalla una vez asignado</li>
+              </ol>
+            </div>
+          </div>
+        ) : (
+          <>
             <select
-              value={cuentaProveedorId}
-              onChange={e => setCuentaProveedorId(e.target.value)}
+              value={contraparteId}
+              onChange={(e) => setContraparteId(e.target.value)}
               className="input"
             >
-              <option value="">— elegir cuenta —</option>
-              {cuentasProveedor.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.sociedad_nombre} · {c.cuenta_interna}{c.descripcion ? ` (${c.descripcion})` : ""}
-                </option>
+              <option value="">— elegir proveedor —</option>
+              {contrapartes.map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre}</option>
               ))}
             </select>
-          </div>
-        )}
-        {contraparteId && cuentasProveedor.length === 0 && (
-          <div className="mt-3 text-2xs text-warn flex items-center gap-1">
-            <AlertCircle size={12} /> Este proveedor no tiene cuentas asignadas.
-            <a href="/plantillas" className="underline ml-1">Ir a Plantillas →</a>
-          </div>
+            {contraparteId && cuentasProveedor.length > 0 && (
+              <div className="mt-3">
+                <label className="label">Sociedad / Cuenta corriente *</label>
+                <select
+                  value={cuentaProveedorId}
+                  onChange={e => setCuentaProveedorId(e.target.value)}
+                  className="input"
+                >
+                  <option value="">— elegir cuenta —</option>
+                  {cuentasProveedor.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.sociedad_nombre} · {c.cuenta_interna}{c.descripcion ? ` (${c.descripcion})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {contraparteId && cuentasProveedor.length === 0 && (
+              <div className="mt-3 text-2xs text-warn flex items-center gap-1">
+                <AlertCircle size={12} /> Este proveedor no tiene cuentas asignadas.
+                <a href="/plantillas" className="underline ml-1">Ir a Plantillas →</a>
+              </div>
+            )}
+          </>
         )}
 
         {plantilla && reglasFaltantes && (

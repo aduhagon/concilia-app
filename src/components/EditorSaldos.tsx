@@ -1,9 +1,32 @@
 "use client"
 
+import { useState } from "react"
+import { Copy, Calendar, Pencil } from "lucide-react"
 import type { SaldosBilaterales } from "@/types"
-import InputMoney from "./InputMoney"
-import { Copy, AlertTriangle } from "lucide-react"
-import { formatNum } from "@/lib/format"
+
+const MESES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+]
+
+// Genera opciones de año: 2 años atrás hasta 1 año adelante
+function generarAnios(): number[] {
+  const hoy = new Date().getFullYear()
+  return [hoy - 2, hoy - 1, hoy, hoy + 1]
+}
+
+// Parsea "Mayo 2026" → { mes: 4, anio: 2026 } (mes 0-indexed)
+function parsearPeriodo(label: string): { mes: number; anio: number } | null {
+  if (!label) return null
+  for (let i = 0; i < MESES.length; i++) {
+    if (label.startsWith(MESES[i])) {
+      const partes = label.trim().split(" ")
+      const anio = parseInt(partes[partes.length - 1])
+      if (!isNaN(anio)) return { mes: i, anio }
+    }
+  }
+  return null
+}
 
 type Props = {
   saldos: SaldosBilaterales
@@ -15,145 +38,207 @@ type Props = {
 }
 
 export default function EditorSaldos({
-  saldos, onChange, periodoLabel, onPeriodoChange,
-  onCopiarAnterior, copiarAnteriorLabel,
+  saldos,
+  onChange,
+  periodoLabel,
+  onPeriodoChange,
+  onCopiarAnterior,
+  copiarAnteriorLabel = "Copiar de mes anterior",
 }: Props) {
-  function set<K extends keyof SaldosBilaterales>(k: K, v: SaldosBilaterales[K]) {
-    onChange({ ...saldos, [k]: v })
+  // Detectar si el periodo actual es formato estándar o libre
+  const parsed = parsearPeriodo(periodoLabel)
+  const [modoLibre, setModoLibre] = useState(!parsed && !!periodoLabel)
+
+  const hoy = new Date()
+  const [mesSelec, setMesSelec] = useState<number>(parsed?.mes ?? hoy.getMonth())
+  const [anioSelec, setAnioSelec] = useState<number>(parsed?.anio ?? hoy.getFullYear())
+
+  const anios = generarAnios()
+
+  function handleMesChange(mes: number) {
+    setMesSelec(mes)
+    onPeriodoChange(`${MESES[mes]} ${anioSelec}`)
   }
 
-  // Detectar inconsistencias TC vs ARS/USD
-  function inconsistenciaTC(usd: number, ars: number): { tc: number; pct: number } | null {
-    if (!saldos.tc_cierre || saldos.tc_cierre === 0) return null
-    if (usd === 0 || ars === 0) return null
-    const tcCalc = Math.abs(ars / usd)
-    const diff = Math.abs(tcCalc - saldos.tc_cierre) / saldos.tc_cierre * 100
-    if (diff > 5) return { tc: tcCalc, pct: diff }
-    return null
+  function handleAnioChange(anio: number) {
+    setAnioSelec(anio)
+    onPeriodoChange(`${MESES[mesSelec]} ${anio}`)
   }
 
-  const incCmp = inconsistenciaTC(saldos.final_compania_usd, saldos.final_compania_ars)
-  const incCont = inconsistenciaTC(saldos.final_contraparte_usd, saldos.final_contraparte_ars)
+  function activarModoLibre() {
+    setModoLibre(true)
+  }
+
+  function activarModoSelector() {
+    // Intentar parsear el texto libre, si no usar mes/año actual
+    const p = parsearPeriodo(periodoLabel)
+    const mes = p?.mes ?? hoy.getMonth()
+    const anio = p?.anio ?? hoy.getFullYear()
+    setMesSelec(mes)
+    setAnioSelec(anio)
+    onPeriodoChange(`${MESES[mes]} ${anio}`)
+    setModoLibre(false)
+  }
+
+  const num = (v: number | string) => (v === 0 || v === "" ? "" : String(v))
 
   return (
-    <div className="panel p-5 space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="h-section">Período y saldos</h3>
-          <p className="text-xs text-ink-500 mt-0.5">
-            Saldos iniciales (cierre del mes anterior) y finales (cierre del mes actual). Doble columna USD + ARS.
-          </p>
-        </div>
-        {onCopiarAnterior && (
-          <button onClick={onCopiarAnterior} className="btn btn-secondary">
-            <Copy size={12} />
-            {copiarAnteriorLabel ?? "Copiar de mes anterior"}
+    <div className="card space-y-5 mt-3">
+      {/* Período */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="label">Período *</label>
+          <button
+            type="button"
+            onClick={modoLibre ? activarModoSelector : activarModoLibre}
+            className="text-2xs text-ink-400 hover:text-accent flex items-center gap-1 underline"
+          >
+            {modoLibre
+              ? <><Calendar size={11} /> Usar selector</>
+              : <><Pencil size={11} /> Texto libre</>
+            }
           </button>
+        </div>
+
+        {modoLibre ? (
+          <input
+            type="text"
+            value={periodoLabel}
+            onChange={e => onPeriodoChange(e.target.value)}
+            placeholder="Ej: Mayo 2026, Q1 2026, etc."
+            className="input"
+            autoFocus
+          />
+        ) : (
+          <div className="flex items-center gap-2">
+            <select
+              value={mesSelec}
+              onChange={e => handleMesChange(Number(e.target.value))}
+              className="input flex-1"
+            >
+              {MESES.map((m, i) => (
+                <option key={m} value={i}>{m}</option>
+              ))}
+            </select>
+            <select
+              value={anioSelec}
+              onChange={e => handleAnioChange(Number(e.target.value))}
+              className="input w-28"
+            >
+              {anios.map(a => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+            {/* Preview del label generado */}
+            {periodoLabel && (
+              <span className="text-xs text-ink-500 font-mono whitespace-nowrap">
+                → {periodoLabel}
+              </span>
+            )}
+          </div>
         )}
       </div>
 
-      {/* Período + TC */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="label">Período</label>
-          <input
-            value={periodoLabel}
-            onChange={(e) => onPeriodoChange(e.target.value)}
-            placeholder="Ej: Enero 2026"
-            className="input"
-          />
-        </div>
-        <div>
-          <label className="label">TC Cierre BNA</label>
-          <InputMoney
-            value={saldos.tc_cierre}
-            onChange={(v) => set("tc_cierre", v)}
-            placeholder="1.447,00"
-          />
-        </div>
-      </div>
-
-      {/* Tabla de saldos al estilo papel contable */}
-      <div className="border border-ink-200">
-        <table className="w-full text-sm">
-          <thead className="bg-ink-50">
-            <tr>
-              <th className="text-left text-2xs uppercase tracking-wider text-ink-500 font-medium px-3 py-2 border-b border-ink-200"></th>
-              <th className="text-right text-2xs uppercase tracking-wider text-ink-500 font-medium px-3 py-2 border-b border-ink-200 w-44" colSpan={2}>Compañía</th>
-              <th className="text-right text-2xs uppercase tracking-wider text-ink-500 font-medium px-3 py-2 border-b border-ink-200 w-44" colSpan={2}>Contraparte</th>
-            </tr>
-            <tr>
-              <th></th>
-              <th className="text-right text-2xs text-ink-400 px-3 py-1 border-b border-ink-200 font-normal">USD</th>
-              <th className="text-right text-2xs text-ink-400 px-3 py-1 border-b border-ink-200 font-normal">ARS</th>
-              <th className="text-right text-2xs text-ink-400 px-3 py-1 border-b border-ink-200 font-normal">USD</th>
-              <th className="text-right text-2xs text-ink-400 px-3 py-1 border-b border-ink-200 font-normal">ARS</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td className="px-3 py-2 text-xs text-ink-500 border-b border-ink-100">Saldo inicial</td>
-              <td className="px-2 py-1 border-b border-ink-100">
-                <InputMoney value={saldos.inicial_compania_usd} onChange={(v) => set("inicial_compania_usd", v)} />
-              </td>
-              <td className="px-2 py-1 border-b border-ink-100">
-                <InputMoney value={saldos.inicial_compania_ars} onChange={(v) => set("inicial_compania_ars", v)} />
-              </td>
-              <td className="px-2 py-1 border-b border-ink-100">
-                <InputMoney value={saldos.inicial_contraparte_usd} onChange={(v) => set("inicial_contraparte_usd", v)} />
-              </td>
-              <td className="px-2 py-1 border-b border-ink-100">
-                <InputMoney value={saldos.inicial_contraparte_ars} onChange={(v) => set("inicial_contraparte_ars", v)} />
-              </td>
-            </tr>
-            <tr className="bg-accent-light/30">
-              <td className="px-3 py-2 text-xs font-semibold text-ink-900 border-b border-ink-200">Saldo final</td>
-              <td className="px-2 py-1 border-b border-ink-200">
-                <InputMoney value={saldos.final_compania_usd} onChange={(v) => set("final_compania_usd", v)} large />
-              </td>
-              <td className="px-2 py-1 border-b border-ink-200">
-                <InputMoney value={saldos.final_compania_ars} onChange={(v) => set("final_compania_ars", v)} large />
-              </td>
-              <td className="px-2 py-1 border-b border-ink-200">
-                <InputMoney value={saldos.final_contraparte_usd} onChange={(v) => set("final_contraparte_usd", v)} large />
-              </td>
-              <td className="px-2 py-1 border-b border-ink-200">
-                <InputMoney value={saldos.final_contraparte_ars} onChange={(v) => set("final_contraparte_ars", v)} large />
-              </td>
-            </tr>
-            <tr className="bg-warn-light/40">
-              <td className="px-3 py-2 text-xs font-semibold text-warn-dark">Diferencia</td>
-              <td className="px-3 py-2 text-right num text-warn-dark text-sm font-semibold" colSpan={2}>
-                USD {formatNum(saldos.final_compania_usd - saldos.final_contraparte_usd)}
-              </td>
-              <td className="px-3 py-2 text-right num text-warn-dark text-sm font-semibold" colSpan={2}>
-                ARS {formatNum(saldos.final_compania_ars - saldos.final_contraparte_ars)}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      {/* Avisos de inconsistencia TC */}
-      {(incCmp || incCont) && (
-        <div className="bg-warn-light border border-warn/30 px-3 py-2 text-xs text-warn-dark flex items-start gap-2">
-          <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-          <div>
-            <div className="font-semibold mb-1">Posible inconsistencia con el TC</div>
-            {incCmp && (
-              <div>
-                Compañía: el TC implícito (ARS/USD) es {formatNum(incCmp.tc, 4)}, difiere {incCmp.pct.toFixed(1)}% del TC ingresado ({formatNum(saldos.tc_cierre, 4)})
-              </div>
-            )}
-            {incCont && (
-              <div>
-                Contraparte: el TC implícito es {formatNum(incCont.tc, 4)}, difiere {incCont.pct.toFixed(1)}% del TC ingresado
-              </div>
-            )}
-            <div className="text-2xs mt-1 text-warn">Verificá que los importes y el TC sean consistentes.</div>
-          </div>
-        </div>
+      {/* Botón copiar de anterior */}
+      {onCopiarAnterior && (
+        <button
+          type="button"
+          onClick={onCopiarAnterior}
+          className="btn btn-secondary text-xs w-full"
+        >
+          <Copy size={13} /> {copiarAnteriorLabel}
+        </button>
       )}
+
+      {/* Saldos iniciales */}
+      <div>
+        <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold mb-2">
+          Saldos iniciales
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <CampoImporte
+            label="Saldo inicial Compañía ARS"
+            value={saldos.inicial_compania_ars}
+            onChange={v => onChange({ ...saldos, inicial_compania_ars: v })}
+          />
+          <CampoImporte
+            label="Saldo inicial Compañía USD"
+            value={saldos.inicial_compania_usd}
+            onChange={v => onChange({ ...saldos, inicial_compania_usd: v })}
+          />
+          <CampoImporte
+            label="Saldo inicial Contraparte ARS"
+            value={saldos.inicial_contraparte_ars}
+            onChange={v => onChange({ ...saldos, inicial_contraparte_ars: v })}
+          />
+          <CampoImporte
+            label="Saldo inicial Contraparte USD"
+            value={saldos.inicial_contraparte_usd}
+            onChange={v => onChange({ ...saldos, inicial_contraparte_usd: v })}
+          />
+        </div>
+      </div>
+
+      {/* Saldos finales */}
+      <div>
+        <div className="text-2xs uppercase tracking-wider text-ink-500 font-semibold mb-2">
+          Saldos finales del período
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <CampoImporte
+            label="Saldo final Compañía ARS"
+            value={saldos.final_compania_ars}
+            onChange={v => onChange({ ...saldos, final_compania_ars: v })}
+          />
+          <CampoImporte
+            label="Saldo final Compañía USD"
+            value={saldos.final_compania_usd}
+            onChange={v => onChange({ ...saldos, final_compania_usd: v })}
+          />
+          <CampoImporte
+            label="Saldo final Contraparte ARS"
+            value={saldos.final_contraparte_ars}
+            onChange={v => onChange({ ...saldos, final_contraparte_ars: v })}
+          />
+          <CampoImporte
+            label="Saldo final Contraparte USD"
+            value={saldos.final_contraparte_usd}
+            onChange={v => onChange({ ...saldos, final_contraparte_usd: v })}
+          />
+        </div>
+      </div>
+
+      {/* TC cierre */}
+      <div className="w-48">
+        <CampoImporte
+          label="TC cierre (1 USD = $ ARS)"
+          value={saldos.tc_cierre}
+          onChange={v => onChange({ ...saldos, tc_cierre: v })}
+          placeholder="Ej: 1050"
+        />
+      </div>
+    </div>
+  )
+}
+
+function CampoImporte({
+  label, value, onChange, placeholder,
+}: {
+  label: string
+  value: number
+  onChange: (v: number) => void
+  placeholder?: string
+}) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input
+        type="number"
+        value={value === 0 ? "" : value}
+        onChange={e => onChange(e.target.value === "" ? 0 : Number(e.target.value))}
+        placeholder={placeholder ?? "0"}
+        className="input"
+      />
     </div>
   )
 }

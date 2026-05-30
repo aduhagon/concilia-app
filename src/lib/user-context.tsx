@@ -8,6 +8,7 @@ type Usuario = {
   nombre: string
   email: string
   rol: "admin" | "supervisor" | "operativo"
+  grupo_id: string
   grupo_nombre: string
 }
 
@@ -29,7 +30,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
       const { data } = await supabase
         .from("usuarios")
-        .select("nombre, email, rol, grupos_trabajo(nombre)")
+        .select("nombre, email, rol, grupo_id, grupos_trabajo(nombre)")
         .eq("id", user.id)
         .single()
 
@@ -39,6 +40,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           nombre: data.nombre,
           email: data.email,
           rol: data.rol as Usuario["rol"],
+          grupo_id: data.grupo_id,
           grupo_nombre: (data.grupos_trabajo as any)?.nombre ?? "",
         })
       }

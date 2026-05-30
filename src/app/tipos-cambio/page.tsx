@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic"
 
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase-client"
+import { useUser } from "@/lib/user-context"
 import { Plus, CheckCircle2, AlertCircle, Lock } from "lucide-react"
 
 type TipoCambio = {
@@ -35,13 +36,15 @@ function periodoLabel(yyyy_mm: string): string {
 }
 
 export default function TiposCambioPage() {
+  const { usuario } = useUser()
   const [tipos, setTipos] = useState<TipoCambio[]>([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [resultado, setResultado] = useState<{ tipo: "ok" | "error"; msg: string } | null>(null)
-  const [usuarioId, setUsuarioId] = useState<string | null>(null)
-  const [grupoId, setGrupoId] = useState<string | null>(null)
+
+  const usuarioId = usuario?.id ?? null
+  const grupoId = usuario?.grupo_id ?? null
 
   // Form
   const [periodo, setPeriodo] = useState(periodoActual())
@@ -49,16 +52,6 @@ export default function TiposCambioPage() {
 
   useEffect(() => {
     async function cargar() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) setUsuarioId(user.id)
-
-      const { data: grupo } = await supabase
-        .from("grupos_trabajo")
-        .select("id")
-        .limit(1)
-        .single()
-      if (grupo) setGrupoId(grupo.id)
-
       const { data } = await supabase
         .from("tipos_cambio")
         .select("id, periodo, tc_usd_ars, definido_por, created_at")
@@ -105,7 +98,7 @@ export default function TiposCambioPage() {
       .select("id")
       .eq("grupo_id", grupoId)
       .eq("periodo", periodoDate)
-      .single()
+      .maybeSingle()
 
     if (existente) {
       // Actualizar

@@ -54,10 +54,10 @@ export default function EditarPlantillaPage() {
 
   useEffect(() => {
     async function cargar() {
-      const { data: c } = await supabase.from("contrapartes").select("nombre").eq("id", contraparteId).single()
+      const { data: c } = await supabase.from("contrapartes").select("nombre").eq("id", contraparteId).maybeSingle()
       setContraparte(c)
 
-      const { data: p } = await supabase.from("plantillas_proveedor").select("*").eq("contraparte_id", contraparteId).single()
+      const { data: p } = await supabase.from("plantillas_proveedor").select("*").eq("contraparte_id", contraparteId).maybeSingle()
       if (p) {
         setPlantilla({
           id: p.id,

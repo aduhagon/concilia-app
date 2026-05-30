@@ -131,6 +131,25 @@ export default function EditarPlantillaPage() {
 
   const [autoconfigCargando, setAutoconfigCargando] = useState(false)
   const [autoconfigError, setAutoconfigError] = useState<string | null>(null)
+  const [autoconfigOk, setAutoconfigOk] = useState<string | null>(null)
+
+  // Busca el mapeo de compania de otra plantilla ya configurada del grupo.
+  // Las RLS aislan por grupo a nivel DB, asi que esto solo devuelve plantillas
+  // del grupo del usuario. Devuelve null si es la primera plantilla del grupo.
+  async function buscarMapeoCompaniaHeredado(): Promise<MapeoCompania | null> {
+    const { data } = await supabase
+      .from("plantillas_proveedor")
+      .select("mapeo_compania")
+      .neq("contraparte_id", contraparteId)   // que no sea esta misma
+      .limit(20)
+
+    for (const p of data ?? []) {
+      const m = p?.mapeo_compania as MapeoCompania | null
+      // Consideramos "configurada" si tiene al menos fecha e importe mapeados.
+      if (m && m.fecha && m.importe_ars) return m
+    }
+    return null
+  }
 
   async function autoconfigurar() {
     if (!plantilla) return
@@ -141,14 +160,35 @@ export default function EditarPlantillaPage() {
 
     setAutoconfigCargando(true)
     setAutoconfigError(null)
+    setAutoconfigOk(null)
 
     try {
+      // Lado compania: si hay otra plantilla del grupo ya configurada,
+      // heredamos su mapeo y no se lo pedimos a la IA.
+      const heredado = await buscarMapeoCompaniaHeredado()
+
+      // Tipos unicos COMPLETOS de cada lado, usando la columna tipo del mapeo
+      // actual (o el heredado para compania).
+      const colTipoCmp = (heredado?.tipo ?? plantilla.mapeo_compania.tipo) || ""
+      const colTipoCont = plantilla.mapeo_contraparte.tipo || ""
+      const tiposCmp = tiposUnicos(muestraCmp.filas, colTipoCmp)
+      const tiposCont = tiposUnicos(muestraCont.filas, colTipoCont)
+
       const res = await fetch("/api/autoconfig", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          compania: { columnas: muestraCmp.columnas, filas: muestraCmp.filas.slice(0, 8) },
-          contraparte: { columnas: muestraCont.columnas, filas: muestraCont.filas.slice(0, 8) },
+          compania: {
+            columnas: muestraCmp.columnas,
+            filas: muestraCmp.filas.slice(0, 8),
+            tipos: tiposCmp,
+          },
+          contraparte: {
+            columnas: muestraCont.columnas,
+            filas: muestraCont.filas.slice(0, 8),
+            tipos: tiposCont,
+          },
+          mapeo_compania_heredado: heredado,
         }),
       })
 
@@ -160,8 +200,6 @@ export default function EditarPlantillaPage() {
         return
       }
 
-      // Volcar la propuesta al estado de la plantilla, sin pisar lo que el
-      // usuario ya tenga cargado a mano salvo que venga algo nuevo.
       setPlantilla({
         ...plantilla,
         mapeo_compania: { ...plantilla.mapeo_compania, ...data.mapeo_compania },
@@ -170,6 +208,10 @@ export default function EditarPlantillaPage() {
         tipos_sin_contraparte_compania: data.tipos_sin_contraparte_compania ?? plantilla.tipos_sin_contraparte_compania,
         tipos_sin_contraparte_externa: data.tipos_sin_contraparte_externa ?? plantilla.tipos_sin_contraparte_externa,
       })
+
+      const nReglas = (data.reglas_tipos ?? []).length
+      const origenCompania = heredado ? "mapeo de compañía heredado" : "mapeo de compañía inferido"
+      setAutoconfigOk(`Propuesta aplicada (${origenCompania}, ${nReglas} regla(s)). Revisá abajo y guardá.`)
     } catch (e) {
       setAutoconfigError(e instanceof Error ? e.message : "Error de red al autoconfigurar")
     }
@@ -461,6 +503,11 @@ export default function EditarPlantillaPage() {
         {autoconfigError && (
           <div className="text-xs text-danger bg-danger-light px-2.5 py-1.5 rounded">
             {autoconfigError}
+          </div>
+        )}
+        {autoconfigOk && (
+          <div className="text-xs text-ok bg-ok-light px-2.5 py-1.5 rounded">
+            {autoconfigOk}
           </div>
         )}
       </section>

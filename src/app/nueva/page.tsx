@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic"
 import { useEffect, useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase-client"
+import { useUser } from "@/lib/user-context"
 import { registrar } from "@/lib/auditoria"
 import { leerExcel, normalizarCompania, normalizarContraparte, exportarResultadoExcel, obtenerInfoArchivo } from "@/lib/excel-parser"
 import { conciliar, type ResultadoConciliacionConLog } from "@/lib/motor-conciliacion"
@@ -36,6 +37,7 @@ const SALDOS_VACIOS: SaldosBilaterales = {
 }
 
 export default function NuevaConciliacionPage() {
+  const { usuario } = useUser()
   const [contrapartes, setContrapartes] = useState<Contraparte[]>([])
   const [cuentasProveedor, setCuentasProveedor] = useState<CuentaProveedor[]>([])
   const [cuentaProveedorId, setCuentaProveedorId, clearCuentaProveedorId] = usePersistedState<string>("nueva-cuenta-proveedor-id", "")
@@ -46,6 +48,8 @@ export default function NuevaConciliacionPage() {
   const [ajustes, setAjustes, clearAjustes] = usePersistedState<AjusteManual[]>("nueva-ajustes", [])
   const [firmadoPor, setFirmadoPor, clearFirma] = usePersistedState<string>("nueva-firma", "")
   const [aprobadoPor, setAprobadoPor, clearAprob] = usePersistedState<string>("nueva-aprob", "")
+
+  const grupoId = usuario?.grupo_id ?? null
 
   const [plantilla, setPlantilla] = useState<PlantillaProveedor | null>(null)
   const [archivoCmp, setArchivoCmp] = useState<File | null>(null)
@@ -107,7 +111,7 @@ export default function NuevaConciliacionPage() {
         if (data?.length === 1) setCuentaProveedorId(data[0].id)
         else setCuentaProveedorId("")
       })
-    supabase.from("plantillas_proveedor").select("*").eq("contraparte_id", contraparteId).single().then(({ data }) => {
+    supabase.from("plantillas_proveedor").select("*").eq("contraparte_id", contraparteId).maybeSingle().then(({ data }) => {
       if (data) {
         setPlantilla({
           id: data.id,
@@ -218,34 +222,30 @@ export default function NuevaConciliacionPage() {
         const partes = periodoLabel.trim().split(" ")
         const mesIdx = MESES.findIndex(m => m.toLowerCase() === partes[0]?.toLowerCase())
         const anio = parseInt(partes[1])
-        if (mesIdx >= 0 && !isNaN(anio)) {
+        if (mesIdx >= 0 && !isNaN(anio) && grupoId) {
           const mes = mesIdx + 1
-          const { data: grupo } = await supabase
-            .from("grupos_trabajo").select("id").limit(1).single()
-          if (grupo) {
-            // Buscar período existente
-            const { data: periodoExistente } = await supabase
+          // Buscar período existente
+          const { data: periodoExistente } = await supabase
+            .from("periodos")
+            .select("id")
+            .eq("grupo_id", grupoId)
+            .eq("anio", anio)
+            .eq("mes", mes)
+            .maybeSingle()
+          if (periodoExistente) {
+            periodoId = periodoExistente.id
+          } else {
+            // Crear período nuevo
+            const fechaInicio = new Date(anio, mes - 1, 1).toISOString().slice(0, 10)
+            const fechaFin = new Date(anio, mes, 0).toISOString().slice(0, 10)
+            const labelCanon = `${MESES[mesIdx]} ${anio}`
+            const { data: nuevoPeriodo } = await supabase
               .from("periodos")
+              .insert({ grupo_id: grupoId, label: labelCanon, anio, mes,
+                        fecha_inicio: fechaInicio, fecha_fin: fechaFin })
               .select("id")
-              .eq("grupo_id", grupo.id)
-              .eq("anio", anio)
-              .eq("mes", mes)
-              .maybeSingle()
-            if (periodoExistente) {
-              periodoId = periodoExistente.id
-            } else {
-              // Crear período nuevo
-              const fechaInicio = new Date(anio, mes - 1, 1).toISOString().slice(0, 10)
-              const fechaFin = new Date(anio, mes, 0).toISOString().slice(0, 10)
-              const labelCanon = `${MESES[mesIdx]} ${anio}`
-              const { data: nuevoPeriodo } = await supabase
-                .from("periodos")
-                .insert({ grupo_id: grupo.id, label: labelCanon, anio, mes,
-                          fecha_inicio: fechaInicio, fecha_fin: fechaFin })
-                .select("id")
-                .single()
-              if (nuevoPeriodo) periodoId = nuevoPeriodo.id
-            }
+              .single()
+            if (nuevoPeriodo) periodoId = nuevoPeriodo.id
           }
         }
       }

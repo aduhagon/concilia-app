@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
+import { useUser } from "@/lib/user-context"
 import { Plus, Settings, Building2, X, Pencil, Upload, Download, CheckCircle2, Users, Trash2 } from "lucide-react"
 
 type Usuario = { id: string; nombre: string; rol: string }
@@ -72,6 +73,7 @@ const CAT_COLORS: Record<string, string> = {
 }
 
 export default function PlantillasPage() {
+  const { usuario } = useUser()
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -84,6 +86,8 @@ export default function PlantillasPage() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [sociedades, setSociedades] = useState<Sociedad[]>([])
   const [rolActual, setRolActual] = useState<string | null>(null)
+
+  const grupoId = usuario?.grupo_id ?? null
 
   // Cuentas por sociedad — para el formulario
   const [cuentasForm, setCuentasForm] = useState<{ sociedad_id: string; cuenta_interna: string; descripcion: string }[]>([])
@@ -290,11 +294,11 @@ export default function PlantillasPage() {
       }
       contraparteId = editando.id
     } else {
-      const { data: empresa } = await supabase.from("empresas").select("id").limit(1).single()
-      const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
+      if (!grupoId) { alert("No se pudo determinar el grupo de trabajo. Recargá la página."); setGuardando(false); return }
+      const { data: empresa } = await supabase.from("empresas").select("id").eq("grupo_id", grupoId).limit(1).maybeSingle()
       const { data: nueva, error } = await supabase
         .from("contrapartes")
-        .insert({ ...payload, empresa_id: empresa?.id, grupo_id: grupo?.id })
+        .insert({ ...payload, empresa_id: empresa?.id, grupo_id: grupoId })
         .select().single()
       if (error || !nueva) { alert("Error al crear: " + error?.message); setGuardando(false); return }
       await supabase.from("plantillas_proveedor").insert({ contraparte_id: nueva.id })
@@ -323,13 +327,17 @@ export default function PlantillasPage() {
     setImportando(true)
     setImportResult(null)
     try {
+      if (!grupoId) {
+        setImportResult({ ok: 0, errores: ["No se pudo determinar el grupo de trabajo. Recargá la página."] })
+        setImportando(false)
+        return
+      }
       const XLSX = await import("xlsx")
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer, { type: "array" })
       const ws = wb.Sheets[wb.SheetNames[0]]
       const filas: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
-      const { data: empresa } = await supabase.from("empresas").select("id").limit(1).single()
-      const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
+      const { data: empresa } = await supabase.from("empresas").select("id").eq("grupo_id", grupoId).limit(1).maybeSingle()
       let ok = 0
       const errores: string[] = []
       for (let i = 0; i < filas.length; i++) {
@@ -339,7 +347,7 @@ export default function PlantillasPage() {
         const categoria = String(f["Categoría *"] ?? f["categoria"] ?? "B").trim().toUpperCase()
         const tipo = String(f["Tipo de Cuenta *"] ?? f["tipo"] ?? "proveedor").trim().toLowerCase()
         const payload = {
-          nombre, empresa_id: empresa?.id, grupo_id: grupo?.id,
+          nombre, empresa_id: empresa?.id, grupo_id: grupoId,
           cuit: String(f["CUIT *"] ?? "").trim() || null,
           tipo: tipo === "cliente" ? "cliente" : "proveedor",
           es_contraparte: String(f["¿Es también contraparte?"] ?? "").toLowerCase() === "sí",

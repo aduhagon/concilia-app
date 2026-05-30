@@ -15,8 +15,11 @@ type TipoCambio = {
   nombre_usuario?: string
 }
 
+// La columna `periodo` es de tipo date y llega como "2026-05-01".
+// Tomamos solo YYYY-MM para evitar "Invalid Date".
 function formatPeriodo(iso: string): string {
-  const d = new Date(iso + "-01")
+  const [y, m] = iso.substring(0, 7).split("-")
+  const d = new Date(parseInt(y), parseInt(m) - 1, 1)
   return d.toLocaleString("es-AR", { month: "long", year: "numeric" })
 }
 

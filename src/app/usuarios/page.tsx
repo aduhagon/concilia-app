@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic"
 
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase-client"
+import { useUser } from "@/lib/user-context"
 import { Plus, X, Pencil, UserCheck, UserX, Mail, Shield, User, Clock, CheckCircle2, AlertCircle } from "lucide-react"
 
 type Usuario = {
@@ -73,6 +74,7 @@ function EstadoActivacion({ u }: { u: Usuario }) {
 }
 
 export default function UsuariosPage() {
+  const { usuario } = useUser()
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -81,6 +83,8 @@ export default function UsuariosPage() {
   const [form, setForm] = useState<FormData>(FORM_VACIO)
   const [usuarioActual, setUsuarioActual] = useState<Usuario | null>(null)
   const [resultado, setResultado] = useState<{ tipo: "ok" | "error"; msg: string } | null>(null)
+
+  const grupoId = usuario?.grupo_id ?? null
 
   async function cargar() {
     setLoading(true)
@@ -153,11 +157,11 @@ export default function UsuariosPage() {
         cargar()
       }
     } else {
-      const { data: grupo } = await supabase
-        .from("grupos_trabajo")
-        .select("id")
-        .limit(1)
-        .single()
+      if (!grupoId) {
+        setResultado({ tipo: "error", msg: "No se pudo determinar el grupo de trabajo. Recargá la página." })
+        setGuardando(false)
+        return
+      }
 
       const token = Math.random().toString(36).substring(2) + Date.now().toString(36)
       const expira = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
@@ -165,7 +169,7 @@ export default function UsuariosPage() {
       const { error: invError } = await supabase
         .from("invitaciones")
         .insert({
-          grupo_id: grupo?.id,
+          grupo_id: grupoId,
           email: form.email.trim().toLowerCase(),
           nombre: form.nombre.trim(),
           rol: form.rol,
@@ -178,7 +182,7 @@ export default function UsuariosPage() {
         setResultado({ tipo: "error", msg: "Error al crear invitación: " + invError.message })
       } else {
         const link = `${window.location.origin}/activar?token=${token}`
-        setResultado({ tipo: "ok", msg: `✅ Invitación creada. Enviá este link al usuario:\n${link}` })
+        setResultado({ tipo: "ok", msg: `✅ Invitación creada.\nEnviá este link al usuario:\n${link}` })
         cargar()
       }
     }
@@ -198,9 +202,12 @@ export default function UsuariosPage() {
   }
 
   async function reenviarInvitacion(u: Usuario) {
+    if (!grupoId) {
+      alert("No se pudo determinar el grupo de trabajo. Recargá la página.")
+      return
+    }
     const token = Math.random().toString(36).substring(2) + Date.now().toString(36)
     const expira = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
-    const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
 
     await supabase.from("invitaciones")
       .update({ usado: true })
@@ -208,7 +215,7 @@ export default function UsuariosPage() {
       .eq("usado", false)
 
     await supabase.from("invitaciones").insert({
-      grupo_id: grupo?.id,
+      grupo_id: grupoId,
       email: u.email,
       nombre: u.nombre,
       rol: u.rol,

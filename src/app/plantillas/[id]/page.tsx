@@ -7,6 +7,7 @@ import { useParams, useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase-client"
 import { registrar } from "@/lib/auditoria"
 import { leerExcel } from "@/lib/excel-parser"
+import { buscarMejorClave, filtrarFilasPorTipos } from "@/lib/autoclave"
 import EditorClave from "@/components/EditorClave"
 import type {
   PlantillaProveedor,
@@ -200,18 +201,58 @@ export default function EditarPlantillaPage() {
         return
       }
 
+      // Mapeos finales (lo que el modelo propuso, fusionado con lo existente).
+      const mapeoCmpFinal = { ...plantilla.mapeo_compania, ...data.mapeo_compania }
+      const mapeoContFinal = { ...plantilla.mapeo_contraparte, ...data.mapeo_contraparte }
+
+      // ---- Etapa 3: construccion automatica de clave ----
+      // Para cada regla de tipo "clave", buscamos el mejor par de
+      // constructores probando candidatos contra las filas reales.
+      const reglasPropuestas: ReglaTipo[] = data.reglas_tipos ?? plantilla.reglas_tipos
+      let reglasConClave = 0
+
+      const reglasFinales: ReglaTipo[] = reglasPropuestas.map((r) => {
+        if (r.metodo_match !== "clave") return r
+
+        // Filtrar las filas de muestra que corresponden a esta regla en cada lado.
+        const filasCmpRegla = filtrarFilasPorTipos(
+          muestraCmp.filas, mapeoCmpFinal.tipo, r.tipo_compania ?? []
+        )
+        const filasContRegla = filtrarFilasPorTipos(
+          muestraCont.filas, mapeoContFinal.tipo, r.tipo_contraparte ?? []
+        )
+
+        const mejor = buscarMejorClave(
+          filasCmpRegla, filasContRegla, mapeoCmpFinal, mapeoContFinal
+        )
+
+        if (mejor) {
+          reglasConClave++
+          return {
+            ...r,
+            clave_compania: mejor.clave_compania,
+            clave_contraparte: mejor.clave_contraparte,
+          }
+        }
+        // Si no se encontro clave que coincida, la dejamos sin clave para
+        // que el usuario la arme a mano en el editor.
+        return r
+      })
+
       setPlantilla({
         ...plantilla,
-        mapeo_compania: { ...plantilla.mapeo_compania, ...data.mapeo_compania },
-        mapeo_contraparte: { ...plantilla.mapeo_contraparte, ...data.mapeo_contraparte },
-        reglas_tipos: data.reglas_tipos ?? plantilla.reglas_tipos,
+        mapeo_compania: mapeoCmpFinal,
+        mapeo_contraparte: mapeoContFinal,
+        reglas_tipos: reglasFinales,
         tipos_sin_contraparte_compania: data.tipos_sin_contraparte_compania ?? plantilla.tipos_sin_contraparte_compania,
         tipos_sin_contraparte_externa: data.tipos_sin_contraparte_externa ?? plantilla.tipos_sin_contraparte_externa,
       })
 
-      const nReglas = (data.reglas_tipos ?? []).length
+      const nReglas = reglasFinales.length
       const origenCompania = heredado ? "mapeo de compañía heredado" : "mapeo de compañía inferido"
-      setAutoconfigOk(`Propuesta aplicada (${origenCompania}, ${nReglas} regla(s)). Revisá abajo y guardá.`)
+      setAutoconfigOk(
+        `Propuesta aplicada (${origenCompania}, ${nReglas} regla(s), ${reglasConClave} con clave automática). Revisá abajo y guardá.`
+      )
     } catch (e) {
       setAutoconfigError(e instanceof Error ? e.message : "Error de red al autoconfigurar")
     }

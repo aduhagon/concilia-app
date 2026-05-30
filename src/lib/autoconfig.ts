@@ -167,11 +167,25 @@ ${seccionMapeoCompania}
   de "tipos" de cada lado, NO las filas de muestra. Tenes que cubrir TODOS los tipos:
   cada tipo de compania y cada tipo de contraparte debe terminar en una regla o en un
   tipo sin contraparte. No dejes tipos afuera.
+
+- REGLA DE ORO sobre las reglas de tipos: una regla SIEMPRE representa un par de
+  equivalencia entre los dos lados. Por lo tanto, toda regla debe tener AL MENOS UN tipo
+  en "tipo_compania" Y AL MENOS UN tipo en "tipo_contraparte".
+  PROHIBIDO devolver reglas con un lado vacio (ni tipo_compania:[] ni tipo_contraparte:[]).
+- Si un tipo de compania NO tiene un equivalente claro del lado contraparte, NO crees una
+  regla para el: mandalo a "tipos_sin_contraparte_compania".
+- Si un tipo de contraparte NO tiene un equivalente claro del lado compania, NO crees una
+  regla para el: mandalo a "tipos_sin_contraparte_externa".
+- Solo agrupa en una misma regla tipos que de verdad se concilian entre si (mismo concepto
+  contable: facturas con facturas, retenciones con retenciones, pagos con cobros). Ante la
+  duda de si dos tipos son equivalentes, NO los emparejes: mandalos a sin contraparte para
+  que un humano lo decida. Es preferible una regla de menos que una regla incorrecta.
+
 - Si un tipo tiene numero de comprobante identificatorio (facturas, notas de credito,
   liquidaciones, retenciones), usa metodo_match "clave".
 - Si es un pago o transferencia sin comprobante comun, usa "importe_fecha" con ventana_dias 5.
-- Si un tipo aparece en un solo lado (diferencias de cambio, ajustes internos, saldo inicial),
-  ponelo en tipos_sin_contraparte_compania o tipos_sin_contraparte_externa.
+- Diferencias de cambio, ajustes de cotizacion, notas internas, saldo inicial y similares
+  casi nunca tienen reflejo del otro lado: van a tipos_sin_contraparte.
 
 Responde UNICAMENTE con un objeto JSON con esta forma exacta:
 {
@@ -238,6 +252,37 @@ export async function inferirConfig(
   if (!Array.isArray(propuesta.reglas_tipos)) {
     propuesta.reglas_tipos = []
   }
+  if (!Array.isArray(propuesta.tipos_sin_contraparte_compania)) {
+    propuesta.tipos_sin_contraparte_compania = []
+  }
+  if (!Array.isArray(propuesta.tipos_sin_contraparte_externa)) {
+    propuesta.tipos_sin_contraparte_externa = []
+  }
+
+  // Red de seguridad: aunque el prompt lo prohibe, si el modelo igual devuelve
+  // una regla con un lado vacio, la descartamos y mandamos sus tipos al cajon
+  // de "sin contraparte" correspondiente. Asi nunca queda una regla que no
+  // puede matchear, y ningun tipo se pierde.
+  const reglasValidas: ReglaTipo[] = []
+  for (const r of propuesta.reglas_tipos) {
+    const comp = Array.isArray(r.tipo_compania) ? r.tipo_compania : []
+    const cont = Array.isArray(r.tipo_contraparte) ? r.tipo_contraparte : []
+    if (comp.length > 0 && cont.length > 0) {
+      reglasValidas.push(r)
+    } else {
+      for (const t of comp) {
+        if (!propuesta.tipos_sin_contraparte_compania.includes(t)) {
+          propuesta.tipos_sin_contraparte_compania.push(t)
+        }
+      }
+      for (const t of cont) {
+        if (!propuesta.tipos_sin_contraparte_externa.includes(t)) {
+          propuesta.tipos_sin_contraparte_externa.push(t)
+        }
+      }
+    }
+  }
+  propuesta.reglas_tipos = reglasValidas
 
   propuesta.reglas_tipos = propuesta.reglas_tipos.map((r, i) => ({
     ...r,

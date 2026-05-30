@@ -129,6 +129,54 @@ export default function EditarPlantillaPage() {
     else setMuestraCont({ columnas: r.columnas, filas: r.filas })
   }
 
+  const [autoconfigCargando, setAutoconfigCargando] = useState(false)
+  const [autoconfigError, setAutoconfigError] = useState<string | null>(null)
+
+  async function autoconfigurar() {
+    if (!plantilla) return
+    if (muestraCmp.columnas.length === 0 || muestraCont.columnas.length === 0) {
+      setAutoconfigError("Subí primero una muestra de cada lado (compañía y contraparte)")
+      return
+    }
+
+    setAutoconfigCargando(true)
+    setAutoconfigError(null)
+
+    try {
+      const res = await fetch("/api/autoconfig", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          compania: { columnas: muestraCmp.columnas, filas: muestraCmp.filas.slice(0, 8) },
+          contraparte: { columnas: muestraCont.columnas, filas: muestraCont.filas.slice(0, 8) },
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setAutoconfigError(data?.error ?? "Error al autoconfigurar")
+        setAutoconfigCargando(false)
+        return
+      }
+
+      // Volcar la propuesta al estado de la plantilla, sin pisar lo que el
+      // usuario ya tenga cargado a mano salvo que venga algo nuevo.
+      setPlantilla({
+        ...plantilla,
+        mapeo_compania: { ...plantilla.mapeo_compania, ...data.mapeo_compania },
+        mapeo_contraparte: { ...plantilla.mapeo_contraparte, ...data.mapeo_contraparte },
+        reglas_tipos: data.reglas_tipos ?? plantilla.reglas_tipos,
+        tipos_sin_contraparte_compania: data.tipos_sin_contraparte_compania ?? plantilla.tipos_sin_contraparte_compania,
+        tipos_sin_contraparte_externa: data.tipos_sin_contraparte_externa ?? plantilla.tipos_sin_contraparte_externa,
+      })
+    } catch (e) {
+      setAutoconfigError(e instanceof Error ? e.message : "Error de red al autoconfigurar")
+    }
+
+    setAutoconfigCargando(false)
+  }
+
   function actualizar<K extends keyof PlantillaProveedor>(k: K, v: PlantillaProveedor[K]) {
     if (!plantilla) return
     setPlantilla({ ...plantilla, [k]: v })
@@ -390,6 +438,31 @@ export default function EditarPlantillaPage() {
           filas={muestraCont.filas.length}
           onFile={(f) => subirMuestra(f, "contraparte")}
         />
+      </section>
+
+      {/* Autoconfigurar con IA */}
+      <section className="card border-accent/40 bg-accent-light/30 space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-ink-900">Autoconfigurar plantilla</div>
+            <p className="text-xs text-ink-500">
+              Analiza las muestras y propone el mapeo de columnas y las reglas de tipos.
+              Revisá y ajustá la propuesta antes de guardar.
+            </p>
+          </div>
+          <button
+            onClick={autoconfigurar}
+            disabled={autoconfigCargando || muestraCmp.columnas.length === 0 || muestraCont.columnas.length === 0}
+            className="btn btn-primary whitespace-nowrap"
+          >
+            {autoconfigCargando ? "Analizando…" : "Autoconfigurar"}
+          </button>
+        </div>
+        {autoconfigError && (
+          <div className="text-xs text-danger bg-danger-light px-2.5 py-1.5 rounded">
+            {autoconfigError}
+          </div>
+        )}
       </section>
 
       {/* Mapeo de columnas */}

@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase-client"
-import { Building2, Copy, Check, ShieldAlert, Loader2, UserPlus, Link as LinkIcon } from "lucide-react"
+import { Building2, Copy, Check, ShieldAlert, Loader2, UserPlus, Link as LinkIcon, Users, RefreshCw } from "lucide-react"
 
 const BASE_URL = "https://concilia-app-seven.vercel.app"
 
@@ -14,6 +14,25 @@ type Resultado = {
   slug: string
   token: string
   admin_email: string
+}
+
+type Cliente = {
+  grupo_id: string
+  nombre: string
+  slug: string
+  plan: string | null
+  fecha_alta: string
+  admin_email: string | null
+  admin_nombre: string | null
+  invitacion_usada: boolean | null
+  invitacion_expira: string | null
+  invitacion_token: string | null
+}
+
+function formatFecha(iso: string) {
+  return new Date(iso).toLocaleDateString("es-AR", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+  })
 }
 
 export default function SuperAdminPage() {
@@ -35,6 +54,16 @@ export default function SuperAdminPage() {
   const [resultado, setResultado] = useState<Resultado | null>(null)
   const [copiado, setCopiado] = useState(false)
 
+  const [clientes, setClientes] = useState<Cliente[]>([])
+  const [cargandoClientes, setCargandoClientes] = useState(false)
+
+  async function cargarClientes() {
+    setCargandoClientes(true)
+    const { data, error } = await supabase.rpc("listar_clientes")
+    if (!error && data) setClientes(data as Cliente[])
+    setCargandoClientes(false)
+  }
+
   // Verificar que el usuario es super-admin
   useEffect(() => {
     async function verificar() {
@@ -43,6 +72,7 @@ export default function SuperAdminPage() {
         setAutorizado(false)
       } else {
         setAutorizado(true)
+        cargarClientes()
       }
     }
     verificar()
@@ -92,6 +122,7 @@ export default function SuperAdminPage() {
     // Limpiar el formulario
     setNombreGrupo(""); setSlug(""); setSlugTocado(false); setCuit("")
     setPlan(""); setNombreSociedad(""); setAdminEmail(""); setAdminNombre(""); setNombreDisplay("")
+    cargarClientes()
   }
 
   const linkActivacion = resultado
@@ -238,6 +269,83 @@ export default function SuperAdminPage() {
           </button>
         </div>
       )}
+
+      {/* Lista de clientes */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Users size={16} className="text-ink-500" />
+            <h2 className="text-sm font-semibold text-ink-900">
+              Clientes ({clientes.length})
+            </h2>
+          </div>
+          <button onClick={cargarClientes} disabled={cargandoClientes}
+            className="btn btn-secondary p-1.5" title="Actualizar">
+            <RefreshCw size={14} className={cargandoClientes ? "animate-spin" : ""} />
+          </button>
+        </div>
+
+        {cargandoClientes && clientes.length === 0 ? (
+          <div className="flex items-center justify-center py-8 text-ink-400 text-sm">
+            <Loader2 className="animate-spin mr-2" size={16} /> Cargando…
+          </div>
+        ) : clientes.length === 0 ? (
+          <p className="text-sm text-ink-400 text-center py-8">
+            Todavía no hay clientes dados de alta.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-2xs uppercase tracking-wider text-ink-500 border-b border-ink-100">
+                  <th className="py-2 pr-3 font-medium">Cliente</th>
+                  <th className="py-2 pr-3 font-medium">Plan</th>
+                  <th className="py-2 pr-3 font-medium">Alta</th>
+                  <th className="py-2 pr-3 font-medium">Admin</th>
+                  <th className="py-2 font-medium">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clientes.map((c) => {
+                  const vencida = c.invitacion_expira
+                    ? new Date(c.invitacion_expira) < new Date()
+                    : false
+                  return (
+                    <tr key={c.grupo_id} className="border-b border-ink-50 last:border-0">
+                      <td className="py-2.5 pr-3">
+                        <div className="font-medium text-ink-900">{c.nombre}</div>
+                        <div className="text-2xs text-ink-400 font-mono">{c.slug}</div>
+                      </td>
+                      <td className="py-2.5 pr-3 text-ink-600">{c.plan ?? "—"}</td>
+                      <td className="py-2.5 pr-3 text-ink-600 whitespace-nowrap">
+                        {formatFecha(c.fecha_alta)}
+                      </td>
+                      <td className="py-2.5 pr-3 text-ink-600">
+                        {c.admin_email ?? "—"}
+                      </td>
+                      <td className="py-2.5">
+                        {c.invitacion_usada ? (
+                          <span className="inline-flex items-center gap-1 text-2xs font-medium text-ok bg-ok-light/50 rounded px-2 py-0.5">
+                            <Check size={11} /> Activado
+                          </span>
+                        ) : vencida ? (
+                          <span className="inline-flex items-center text-2xs font-medium text-danger bg-danger-light rounded px-2 py-0.5">
+                            Invitación vencida
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center text-2xs font-medium text-ink-500 bg-ink-100 rounded px-2 py-0.5">
+                            Pendiente
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

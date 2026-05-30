@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic"
 
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase-client"
+import { useUser } from "@/lib/user-context"
 import { Plus, X, Pencil, CheckCircle2, AlertCircle, Building } from "lucide-react"
 
 type Sociedad = {
@@ -15,31 +16,23 @@ type Sociedad = {
 }
 
 export default function SociedadesPage() {
+  const { usuario } = useUser()
   const [sociedades, setSociedades] = useState<Sociedad[]>([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [editando, setEditando] = useState<Sociedad | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [resultado, setResultado] = useState<{ tipo: "ok" | "error"; msg: string } | null>(null)
-  const [grupoId, setGrupoId] = useState<string | null>(null)
+
+  const grupoId = usuario?.grupo_id ?? null
 
   const [nombre, setNombre] = useState("")
   const [codigo, setCodigo] = useState("")
 
   useEffect(() => {
-    async function init() {
-      const { data: grupo } = await supabase
-        .from("grupos_trabajo")
-        .select("id")
-        .limit(1)
-        .single()
-      if (grupo) {
-        setGrupoId(grupo.id)
-        await cargar(grupo.id)
-      }
-    }
-    init()
-  }, [])
+    if (!grupoId) return
+    cargar(grupoId)
+  }, [grupoId])
 
   async function cargar(gid: string) {
     setLoading(true)

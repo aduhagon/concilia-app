@@ -34,6 +34,7 @@ const RUTAS_SIN_HEADER = ["/login", "/activar", "/cambiar-password"]
 const ROUTE_TITLES: Array<{ match: string; exact?: boolean; title: string }> = [
   { match: "/",                     exact: true, title: "Inicio" },
   { match: "/nueva",                exact: true, title: "Nueva conciliación" },
+  { match: "/comparador",           title: "Comparador de bases" },
   { match: "/conciliaciones",       exact: true, title: "Historial" },
   { match: "/conciliaciones/",      title: "Detalle de conciliación" },
   { match: "/supervisor",           title: "Tablero de supervisión" },
@@ -68,6 +69,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { href: "/",                    label: "Inicio" },
   { href: "/conciliaciones",      label: "Historial" },
+  { href: "/comparador",          label: "Comparador" },
   { href: "/plantillas",          label: "Plantillas",        roles: ["admin", "supervisor"] },
   { href: "/supervisor",          label: "Tablero",           roles: ["admin", "supervisor"] },
   { href: "/historial-categorias",label: "Hist. categorías",  roles: ["admin", "supervisor"] },

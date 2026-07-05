@@ -25,16 +25,27 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function cargar() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setCargando(false); return }
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) { setUsuario(null); return }
 
-      const { data } = await supabase
-        .from("usuarios")
-        .select("nombre, email, rol, grupo_id, grupos_trabajo(nombre)")
-        .eq("id", user.id)
-        .single()
+        const { data, error } = await supabase
+          .from("usuarios")
+          .select("nombre, email, rol, grupo_id, grupos_trabajo(nombre)")
+          .eq("id", user.id)
+          .maybeSingle()
 
-      if (data) {
+        if (error) {
+          console.error("[user-context] error al leer usuario:", error)
+          setUsuario(null)
+          return
+        }
+        if (!data) {
+          console.error("[user-context] no se encontró la fila del usuario", user.id)
+          setUsuario(null)
+          return
+        }
+
         setUsuario({
           id: user.id,
           nombre: data.nombre,
@@ -43,8 +54,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           grupo_id: data.grupo_id,
           grupo_nombre: (data.grupos_trabajo as any)?.nombre ?? "",
         })
+      } catch (e) {
+        console.error("[user-context] error inesperado:", e)
+        setUsuario(null)
+      } finally {
+        setCargando(false)
       }
-      setCargando(false)
     }
 
     cargar()

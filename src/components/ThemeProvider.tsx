@@ -6,19 +6,23 @@ import { supabase } from "@/lib/supabase-client"
 export default function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     async function aplicarTema() {
-      const { data: grupo } = await supabase
-        .from("grupos_trabajo")
-        .select("id")
-        .limit(1)
-        .single()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
 
-      if (!grupo) return
+      // Resolver el grupo del usuario logueado (no el primero de la base)
+      const { data: u } = await supabase
+        .from("usuarios")
+        .select("grupo_id")
+        .eq("id", user.id)
+        .maybeSingle()
+
+      if (!u?.grupo_id) return
 
       const { data: config } = await supabase
         .from("grupos_config")
         .select("color_primario, color_acento, color_fondo, tipografia, logo_url, nombre_display")
-        .eq("grupo_id", grupo.id)
-        .single()
+        .eq("grupo_id", u.grupo_id)
+        .maybeSingle()
 
       if (!config) return
 

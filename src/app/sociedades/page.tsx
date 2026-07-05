@@ -36,23 +36,28 @@ export default function SociedadesPage() {
 
   async function cargar(gid: string) {
     setLoading(true)
-    const { data } = await supabase
-      .from("sociedades")
-      .select("id, nombre, codigo, activo")
-      .eq("grupo_id", gid)
-      .order("nombre")
+    try {
+      const { data } = await supabase
+        .from("sociedades")
+        .select("id, nombre, codigo, activo")
+        .eq("grupo_id", gid)
+        .order("nombre")
 
-    // Contar cuentas por sociedad
-    const items: Sociedad[] = []
-    for (const s of data ?? []) {
-      const { count } = await supabase
-        .from("contrapartes")
-        .select("id", { count: "exact", head: true })
-        .eq("sociedad_id", s.id)
-      items.push({ ...s, cuentas: count ?? 0 })
+      // Contar cuentas por sociedad
+      const items: Sociedad[] = []
+      for (const s of data ?? []) {
+        const { count } = await supabase
+          .from("contrapartes")
+          .select("id", { count: "exact", head: true })
+          .eq("sociedad_id", s.id)
+        items.push({ ...s, cuentas: count ?? 0 })
+      }
+      setSociedades(items)
+    } catch (e) {
+      console.error("[sociedades] error al cargar:", e)
+    } finally {
+      setLoading(false)
     }
-    setSociedades(items)
-    setLoading(false)
   }
 
   function abrirNuevo() {

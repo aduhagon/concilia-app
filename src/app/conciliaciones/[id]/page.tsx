@@ -73,7 +73,7 @@ export default function DetalleConciliacionPage() {
   const [pendientes, setPendientes] = useState<MovGuardado[]>([])
   const [loading, setLoading] = useState(true)
   const [historial, setHistorial] = useState<HistorialItem[]>([])
-  const [usuarioActual, setUsuarioActual] = useState<{ id: string; rol: string; nombre: string } | null>(null)
+  const [usuarioActual, setUsuarioActual] = useState<{ id: string; rol: string; nombre: string; grupo_id: string } | null>(null)
   const [mostrarHistorial, setMostrarHistorial] = useState(false)
   const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
   const [mostrarModalAprobacion, setMostrarModalAprobacion] = useState(false)
@@ -176,20 +176,19 @@ export default function DetalleConciliacionPage() {
       if (user) {
         const { data: u } = await supabase
           .from("usuarios")
-          .select("id, rol, nombre")
+          .select("id, rol, nombre, grupo_id")
           .eq("id", user.id)
-          .single()
-        if (u) setUsuarioActual(u)
-      }
+          .maybeSingle()
+        if (u) {
+          setUsuarioActual(u)
 
-      const { data: grupo } = await supabase.from("grupos_trabajo").select("id").limit(1).single()
-      if (grupo) {
-        const { data: cfg } = await supabase
-          .from("grupos_config")
-          .select("logo_url, nombre_display, color_primario")
-          .eq("grupo_id", grupo.id)
-          .single()
-        if (cfg) setGrupoConfig(cfg)
+          const { data: cfg } = await supabase
+            .from("grupos_config")
+            .select("logo_url, nombre_display, color_primario")
+            .eq("grupo_id", u.grupo_id)
+            .maybeSingle()
+          if (cfg) setGrupoConfig(cfg)
+        }
       }
 
       const { data: agrupadosData } = await supabase
@@ -438,14 +437,10 @@ export default function DetalleConciliacionPage() {
     if (!modalReclamo || !c || !usuarioActual) return
     setGuardandoReclamo(true)
     try {
-      const { data: grupo } = await supabase
-        .from("grupos_trabajo").select("id").limit(1).single()
-      if (!grupo) return
-
       const { data: nuevo } = await supabase
         .from("reclamos")
         .insert({
-          grupo_id: grupo.id,
+          grupo_id: usuarioActual.grupo_id,
           conciliacion_id: c.id,
           movimiento_id: modalReclamo.movId,
           contraparte_id: (c as any).contrapartes?.id ?? c.id,

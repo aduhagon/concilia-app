@@ -3,8 +3,8 @@
 // recupera los ultimos movimientos de cada lado y calcula la clave para cada uno.
 // Se usa desde el panel ProbarClavePanel para verificar la configuracion antes de guardar.
 
-import { createClient } from '@supabase/supabase-js'
 import { construirClave } from './constructor-clave'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 // Importamos el tipo directamente desde el proyecto para no redefinirlo y
 // evitar desincronizacion con la definicion real de ConstructorClave.
@@ -39,15 +39,12 @@ export interface ResultadoProbarClave {
  * Si no hay movimientos previos, devuelve arrays vacios (sin lanzar error).
  */
 export async function probarClave(
+  supabase: SupabaseClient,
   contraparteId: string,
   constructorCompania: ConstructorClave,
   constructorContraparte: ConstructorClave,
-  supabaseUrl: string,
-  supabaseKey: string,
   limite = 20
 ): Promise<ResultadoProbarClave> {
-  const supabase = createClient(supabaseUrl, supabaseKey)
-
   // Buscar la ultima conciliacion con movimientos para esta contraparte
   const { data: conciliacion, error: errConc } = await supabase
     .from('conciliaciones')

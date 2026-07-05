@@ -29,25 +29,26 @@ function ActivarContenido() {
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Validación del token vía API server-side (no depende de RLS ni de sesión).
   useEffect(() => {
     if (!token) { setEstado("error"); return }
-    supabase
-      .from("invitaciones")
-      .select("id, email, nombre, usado, expira_at, grupos_trabajo(nombre)")
-      .eq("token", token)
-      .single()
-      .then(({ data, error: err }) => {
-        if (err || !data) { setEstado("error"); return }
-        if (data.usado) { setEstado("expirado"); return }
-        if (new Date(data.expira_at) < new Date()) { setEstado("expirado"); return }
-        setInvitacion({
-          email: data.email,
-          nombre: data.nombre,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          grupo_nombre: (data.grupos_trabajo as any)?.nombre ?? "",
-        })
-        setEstado("listo")
+    fetch(`/api/activar?token=${encodeURIComponent(token)}`)
+      .then(async (res) => {
+        if (res.ok) {
+          const data = await res.json()
+          setInvitacion({
+            email: data.email,
+            nombre: data.nombre,
+            grupo_nombre: data.grupo_nombre ?? "",
+          })
+          setEstado("listo")
+          return
+        }
+        // 410 = usado o expirado; el resto = link inválido
+        if (res.status === 410) setEstado("expirado")
+        else setEstado("error")
       })
+      .catch(() => setEstado("error"))
   }, [token])
 
   async function activar(e: React.FormEvent) {
@@ -55,81 +56,43 @@ function ActivarContenido() {
     setError(null)
     if (password.length < 8) { setError("La contraseña debe tener al menos 8 caracteres"); return }
     if (password !== confirmar) { setError("Las contraseñas no coinciden"); return }
-    if (!invitacion) { setError("Invitación inválida."); return }
+    if (!invitacion || !token) { setError("Invitación inválida."); return }
+
     setCargando(true)
     try {
-      // 1. Cerrar cualquier sesión activa para evitar que signUp se confunda
-      await supabase.auth.signOut()
-
-      // 2. Obtener datos completos de la invitación (grupo_id y rol)
-      const { data: inv, error: invErr } = await supabase
-        .from("invitaciones")
-        .select("id, email, nombre, rol, grupo_id")
-        .eq("token", token!)
-        .eq("usado", false)
-        .single()
-
-      if (invErr || !inv) {
-        setError("El link de activación ya fue usado o expiró.")
-        setCargando(false)
-        return
-      }
-
-      // 3. Crear el usuario en Supabase Auth con signUp
-      const { data: authData, error: signUpError } = await supabase.auth.signUp({
-        email: inv.email,
-        password,
-        options: {
-          data: { nombre: inv.nombre },
-        },
+      // 1. Activar la cuenta en el servidor (crea el usuario y el perfil).
+      const res = await fetch("/api/activar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password }),
       })
 
-      if (signUpError || !authData.user) {
-        // Si el usuario ya existe en Auth (doble click, etc.) intentar login directo
-        if (signUpError?.message?.includes("already registered")) {
-          const { error: loginErr } = await supabase.auth.signInWithPassword({
-            email: inv.email,
-            password,
-          })
-          if (loginErr) {
-            setError("Este email ya tiene una cuenta. Intentá iniciar sesión normalmente.")
-            setCargando(false)
-            return
-          }
-        } else {
-          setError(signUpError?.message ?? "Error al crear la cuenta.")
-          setCargando(false)
-          return
-        }
-      }
+      const data = await res.json().catch(() => ({}))
 
-      const userId = authData.user?.id
-      if (!userId) {
-        setError("Error inesperado al obtener el ID de usuario.")
+      if (!res.ok) {
+        if (res.status === 410) { setEstado("expirado"); return }
+        setError(data?.error ?? "No se pudo activar la cuenta.")
         setCargando(false)
         return
       }
 
-      // 4. Crear el registro en la tabla usuarios de la app
-      await supabase.from("usuarios").upsert({
-        id: userId,
-        nombre: inv.nombre,
-        email: inv.email,
-        rol: inv.rol,
-        grupo_id: inv.grupo_id,
-        activo: true,
-        primer_login: false,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "id" })
+      // 2. Iniciar sesión con las credenciales recién creadas.
+      const { error: loginErr } = await supabase.auth.signInWithPassword({
+        email: invitacion.email,
+        password,
+      })
 
-      // 5. Marcar la invitación como usada
-      await supabase.from("invitaciones").update({ usado: true }).eq("token", token!)
+      if (loginErr) {
+        // La cuenta quedó creada; si el login falla, que entre manualmente.
+        setError("Cuenta activada. Iniciá sesión con tu email y contraseña.")
+        setCargando(false)
+        return
+      }
 
       setEstado("done")
       setTimeout(() => { router.push("/"); router.refresh() }, 1200)
     } catch {
       setError("Error inesperado. Contactá a tu supervisor.")
-    } finally {
       setCargando(false)
     }
   }

@@ -62,30 +62,36 @@ export default function HomePage() {
 
   useEffect(() => {
     async function cargar() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
 
-      const { data: u } = await supabase
-        .from("usuarios")
-        .select("nombre, rol")
-        .eq("id", user.id)
-        .single()
+        const { data: u, error: errUsuario } = await supabase
+          .from("usuarios")
+          .select("nombre, rol")
+          .eq("id", user.id)
+          .maybeSingle()
 
-      if (!u) return
-      setNombre(u.nombre)
-      setRol(u.rol as Rol)
-      setUsuarioId(user.id)
+        if (errUsuario) { console.error("[home] error al leer usuario:", errUsuario); return }
+        if (!u) { console.error("[home] no se encontró la fila del usuario", user.id); return }
 
-      if (u.rol === "operativo") {
-        await cargarCuentasOperativo(user.id)
-      } else {
-        await Promise.all([
-          cargarStatsSupervision(),
-          cargarPendientesAprobacion(),
-        ])
+        setNombre(u.nombre)
+        setRol(u.rol as Rol)
+        setUsuarioId(user.id)
+
+        if (u.rol === "operativo") {
+          await cargarCuentasOperativo(user.id)
+        } else {
+          await Promise.all([
+            cargarStatsSupervision(),
+            cargarPendientesAprobacion(),
+          ])
+        }
+      } catch (e) {
+        console.error("[home] error inesperado al cargar:", e)
+      } finally {
+        setLoading(false)
       }
-
-      setLoading(false)
     }
     cargar()
   }, [])

@@ -287,6 +287,11 @@ function matchPorImporteFecha(
 
 const MAX_TAMANO_GRUPO = 5
 const MAX_GRUPOS_POR_REGLA = 30
+// Presupuesto de nodos por búsqueda combinatoria. Evita que el backtracking
+// se cuelgue en cuentas grandes cuando ningún subconjunto suma al objetivo
+// (la poda "suma > objetivo" no dispara y la búsqueda explota). Al agotarse,
+// se aborta y se devuelve el mejor resultado hallado (posiblemente ninguno).
+const MAX_NODOS_COMBINACION = 20000
 
 function buscarAgrupados(
   ladoN: MovimientoResultado[],
@@ -369,8 +374,16 @@ function buscarCombinacionSuma(
 
   let mejor: MovimientoResultado[] | null = null
   let mejorDif = Infinity
+  let nodos = 0
+  let abortado = false
 
   function backtrack(idx: number, sumaActual: number, seleccionados: MovimientoResultado[]) {
+    // Presupuesto de nodos: si se agota, aborta la rama y toda la búsqueda.
+    if (nodos++ >= MAX_NODOS_COMBINACION) {
+      abortado = true
+      return
+    }
+
     const dif = Math.abs(sumaActual - objetivo)
     if (dif <= tolerancia && seleccionados.length >= 2) {
       if (dif < mejorDif) {
@@ -383,6 +396,7 @@ function buscarCombinacionSuma(
     if (sumaActual > objetivo + tolerancia) return
     if (idx >= ordenados.length) return
     if (mejorDif === 0) return
+    if (abortado) return
 
     const m = ordenados[idx]
     const imp = Math.abs(m.importe_ars) || Math.abs(m.importe_usd)
@@ -390,6 +404,7 @@ function buscarCombinacionSuma(
     backtrack(idx + 1, sumaActual + imp, seleccionados)
     seleccionados.pop()
 
+    if (abortado) return
     backtrack(idx + 1, sumaActual, seleccionados)
   }
 

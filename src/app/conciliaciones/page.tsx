@@ -93,41 +93,72 @@ function fmtDif(dif: number | null): { texto: string; color: string } {
   return { texto: `${signo}$${abs}`, color }
 }
 
+// Tamaño de cada bloque que se trae al presionar "Cargar más".
+const TAMANO_BLOQUE = 100
+
 export default function HistorialPage() {
   const { usuario } = useUser()
+  const grupoId = usuario?.grupo_id ?? null
+
   const [items, setItems] = useState<ConciliacionRow[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(true)         // carga inicial
+  const [cargandoMas, setCargandoMas] = useState(false) // carga de bloques siguientes
+  const [hayMas, setHayMas] = useState(false)           // ¿quedan más por traer?
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set())
   const [filtro, setFiltro] = useState("")
 
-  useEffect(() => {
-    supabase
+  // Trae un bloque a partir de `offset`. Si viene menos que TAMANO_BLOQUE,
+  // significa que ya no quedan más registros.
+  async function cargarBloque(offset: number, gid: string) {
+    const { data } = await supabase
       .from("conciliaciones")
       .select(`
         id, contraparte_id, cuenta_proveedor_id, periodo_label,
         diferencia_final_ars, estado, created_at,
-        contrapartes(nombre),
+        contrapartes!inner(nombre, grupo_id),
         cuentas_proveedor(cuenta_interna, sociedades(nombre))
       `)
+      // conciliaciones no tiene grupo_id propio: se filtra por el grupo de la
+      // contraparte (join !inner). Defensa en profundidad además de RLS: así el
+      // bloque no se "gasta" trayendo filas de otros tenants.
+      .eq("contrapartes.grupo_id", gid)
       .order("created_at", { ascending: false })
-      .limit(200)
-      .then(({ data }) => {
-        const rows: ConciliacionRow[] = (data ?? []).map((c: any) => ({
-          id: c.id,
-          contraparte_id: c.contraparte_id,
-          contraparte_nombre: c.contrapartes?.nombre ?? "—",
-          cuenta_proveedor_id: c.cuenta_proveedor_id ?? null,
-          sociedad_nombre: c.cuentas_proveedor?.sociedades?.nombre ?? null,
-          cuenta_interna: c.cuentas_proveedor?.cuenta_interna ?? null,
-          periodo_label: c.periodo_label,
-          diferencia_final_ars: c.diferencia_final_ars,
-          estado: c.estado,
-          created_at: c.created_at,
-        }))
-        setItems(rows)
-        setLoading(false)
-      })
-  }, [])
+      .range(offset, offset + TAMANO_BLOQUE - 1)
+
+    const rows: ConciliacionRow[] = (data ?? []).map((c: any) => ({
+      id: c.id,
+      contraparte_id: c.contraparte_id,
+      contraparte_nombre: c.contrapartes?.nombre ?? "—",
+      cuenta_proveedor_id: c.cuenta_proveedor_id ?? null,
+      sociedad_nombre: c.cuentas_proveedor?.sociedades?.nombre ?? null,
+      cuenta_interna: c.cuentas_proveedor?.cuenta_interna ?? null,
+      periodo_label: c.periodo_label,
+      diferencia_final_ars: c.diferencia_final_ars,
+      estado: c.estado,
+      created_at: c.created_at,
+    }))
+
+    setHayMas(rows.length === TAMANO_BLOQUE)
+    return rows
+  }
+
+  // Carga inicial (primer bloque). Espera a tener grupo_id resuelto.
+  useEffect(() => {
+    if (!grupoId) return
+    setLoading(true)
+    cargarBloque(0, grupoId).then(rows => {
+      setItems(rows)
+      setLoading(false)
+    })
+  }, [grupoId])
+
+  async function cargarMas() {
+    if (!grupoId || cargandoMas) return
+    setCargandoMas(true)
+    const rows = await cargarBloque(items.length, grupoId)
+    setItems(prev => [...prev, ...rows])
+    setCargandoMas(false)
+  }
 
   function toggleExpandido(key: string) {
     setExpandidos(prev => {
@@ -343,6 +374,23 @@ export default function HistorialPage() {
                   </div>
                 </div>
               ))}
+
+              {/* Cargar más: solo sin filtro activo (el filtro opera sobre lo
+                  ya cargado en cliente). */}
+              {!hayFiltroActivo && hayMas && (
+                <div className="flex flex-col items-center gap-2 pt-2">
+                  <button
+                    onClick={cargarMas}
+                    disabled={cargandoMas}
+                    className="btn btn-secondary text-xs disabled:opacity-50"
+                  >
+                    {cargandoMas ? "Cargando…" : "Cargar más"}
+                  </button>
+                  <div className="text-2xs text-ink-400">
+                    Mostrando {totalConciliaciones} conciliación{totalConciliaciones !== 1 ? "es" : ""}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>

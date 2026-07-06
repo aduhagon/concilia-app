@@ -94,16 +94,13 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // 3. Ya autorizado: ejecutar probarClave con el service role.
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
-
+    // 3. Ya autorizado: ejecutar probarClave reutilizando el cliente admin
+    // (service role). La firma recibe el cliente ya construido como primer arg.
     const resultado = await probarClave(
+      db,
       contraparte_id,
       constructor_compania,
       constructor_contraparte,
-      supabaseUrl,
-      serviceKey,
       Math.min(limite, 50) // cap a 50 por seguridad
     )
 

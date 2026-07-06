@@ -86,6 +86,9 @@ export default function DynamicHeader() {
 
   const esRutaPublica = RUTAS_SIN_HEADER.some(r => pathname.startsWith(r))
 
+  // grupo_id del usuario autenticado (multi-tenant correcto).
+  const grupoId = usuario?.grupo_id ?? null
+
   // Filtrar ítems según el rol del usuario
   const itemsVisibles = NAV_ITEMS.filter(item => {
     if (!item.roles) return true
@@ -106,18 +109,15 @@ export default function DynamicHeader() {
       } catch {}
     }
 
-    async function cargar() {
-      const { data: grupo } = await supabase
-        .from("grupos_trabajo")
-        .select("id")
-        .limit(1)
-        .single()
-      if (!grupo) return
+    // Sin grupo resuelto todavía, no consultamos la config: evitamos leer
+    // la de un grupo arbitrario. El caché (si existe) ya pintó algo provisional.
+    if (!grupoId) return
 
+    async function cargar(gid: string) {
       const { data } = await supabase
         .from("grupos_config")
         .select("color_primario, color_acento, color_fondo, tipografia, logo_url, nombre_display")
-        .eq("grupo_id", grupo.id)
+        .eq("grupo_id", gid)
         .single()
 
       if (data) {
@@ -128,7 +128,7 @@ export default function DynamicHeader() {
         document.body.style.fontFamily = `"${config.tipografia}", system-ui, sans-serif`
       }
     }
-    cargar()
+    cargar(grupoId)
 
     // Escuchar cambios de preview en vivo desde /configuracion
     function onPreview() {
@@ -145,7 +145,7 @@ export default function DynamicHeader() {
     }
     window.addEventListener("concilia_config_preview", onPreview)
     return () => window.removeEventListener("concilia_config_preview", onPreview)
-  }, [esRutaPublica, pathname])
+  }, [esRutaPublica, pathname, grupoId])
 
   // Actualizar el título de la pestaña al cambiar de ruta o nombre de app
   useEffect(() => {
@@ -180,33 +180,30 @@ export default function DynamicHeader() {
             </span>
           </Link>
 
-          <nav className="flex items-center gap-1 text-xs">
-            {itemsVisibles.map(({ href, label }) => (
-              <Link
-                key={href}
-                href={href}
-                className={`px-3 py-1.5 transition-colors rounded ${
-                  pathname === href || (href !== "/" && pathname.startsWith(href))
-                    ? "text-white bg-white/20"
-                    : "text-white/60 hover:text-white hover:bg-white/10"
-                }`}
-              >
-                {label}
-              </Link>
-            ))}
+          <nav className="hidden md:flex items-center gap-1">
+            {itemsVisibles.map(item => {
+              const activo =
+                item.href === "/"
+                  ? pathname === "/"
+                  : pathname.startsWith(item.href)
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    activo
+                      ? "bg-white/20 text-white"
+                      : "text-white/80 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              )
+            })}
           </nav>
         </div>
 
         <div className="flex items-center gap-3">
-          {usuario && (usuario.rol === "admin" || usuario.rol === "supervisor" || usuario.rol === "operativo") && (
-            <Link
-              href="/nueva"
-              className="px-3 py-1.5 text-sm font-semibold rounded text-white"
-              style={{ background: cfg.color_acento }}
-            >
-              + Nueva conciliación
-            </Link>
-          )}
           <NotificacionesBell />
           <HeaderUsuario />
         </div>

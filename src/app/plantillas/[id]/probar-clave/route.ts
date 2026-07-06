@@ -10,22 +10,47 @@
 //
 // Response: ResultadoProbarClave
 //
-// Seguridad: usa la sesión del usuario (cookies) en vez de la anon key pelada.
-// Así RLS reconoce al usuario como authenticated de su grupo y le devuelve
-// solo los movimientos de SU grupo. Sin sesión válida → 401.
+// SEGURIDAD (fix cross-tenant):
+// Antes este handler creaba un cliente con la ANON KEY sin sesión, por lo que
+// probarClave() corría sin ninguna verificación de que la contraparte pedida
+// perteneciera al grupo del usuario. Cualquier usuario autenticado (o incluso
+// sin sesión, si el middleware no lo cubría) podía leer movimientos de otra
+// contraparte de OTRO tenant pasando su UUID.
+//
+// Ahora:
+//  1. Se valida la sesión con getUsuarioSesion() (lee cookies server-side).
+//  2. Se confirma que contraparte_id pertenece al grupo_id del usuario.
+//  3. Recién ahí se ejecuta probarClave con el service role.
+// Si la contraparte no es del grupo del usuario -> 403.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { createClient } from '@supabase/supabase-js'
 import { probarClave } from '@/lib/probar-clave'
+import { getUsuarioSesion } from '@/lib/auth'
+
+export const dynamic = 'force-dynamic'
+
+// Cliente admin (service role): solo se usa server-side, nunca se expone al browser.
+function admin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) {
+    throw new Error('Faltan variables de entorno de Supabase (URL o SERVICE_ROLE_KEY).')
+  }
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
-
-    // Validar sesión: sin usuario autenticado no se ejecuta nada.
-    const { data: { user }, error: errAuth } = await supabase.auth.getUser()
-    if (errAuth || !user) {
-      return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+    // 1. Validar sesión. Sin usuario autenticado -> 401.
+    const usuario = await getUsuarioSesion()
+    if (!usuario) {
+      return NextResponse.json(
+        { error: 'No autenticado.' },
+        { status: 401 }
+      )
     }
 
     const body = await req.json()
@@ -43,34 +68,52 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Verificar que la contraparte pertenezca al grupo del usuario.
-    // RLS ya filtra, pero un chequeo explícito da un 403 claro en vez de
-    // "0 movimientos" silencioso cuando el id es de otro grupo.
-    const { data: contraparte } = await supabase
+    const db = admin()
+
+    // 2. Autorización: la contraparte debe pertenecer al grupo del usuario.
+    const { data: contraparte, error: errCtp } = await db
       .from('contrapartes')
-      .select('id')
+      .select('id, grupo_id')
       .eq('id', contraparte_id)
       .maybeSingle()
 
-    if (!contraparte) {
+    if (errCtp) {
+      console.error('[probar-clave route] lookup contraparte', errCtp.message)
       return NextResponse.json(
-        { error: 'Contraparte no encontrada o sin acceso' },
+        { error: 'Error al validar la contraparte.' },
+        { status: 500 }
+      )
+    }
+
+    // Mismo mensaje/estado para "no existe" y "no es de tu grupo": no revelamos
+    // si un UUID de otro tenant existe o no.
+    if (!contraparte || contraparte.grupo_id !== usuario.grupo_id) {
+      return NextResponse.json(
+        { error: 'La contraparte no existe o no pertenece a tu grupo.' },
         { status: 403 }
       )
     }
 
+    // 3. Ya autorizado: ejecutar probarClave con el service role.
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+
     const resultado = await probarClave(
-      supabase,
       contraparte_id,
       constructor_compania,
       constructor_contraparte,
+      supabaseUrl,
+      serviceKey,
       Math.min(limite, 50) // cap a 50 por seguridad
     )
 
     return NextResponse.json(resultado)
   } catch (e: unknown) {
-    const mensaje = e instanceof Error ? e.message : 'Error interno del servidor'
-    console.error('[probar-clave route]', e)
-    return NextResponse.json({ error: mensaje }, { status: 500 })
+    const msg = e instanceof Error ? e.message : 'Error interno del servidor'
+    console.error('[probar-clave route]', msg)
+    return NextResponse.json(
+      { error: msg },
+      { status: 500 }
+    )
   }
 }

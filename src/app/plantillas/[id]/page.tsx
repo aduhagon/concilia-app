@@ -17,6 +17,8 @@ import type {
   ConstructorClave,
 } from "@/types"
 import { ArrowLeft, Save, Upload, Plus, Trash2, ChevronDown, ChevronUp, FileWarning, History, Clock, ArrowUp, ArrowDown, GripVertical } from "lucide-react"
+import { useToast } from "@/components/Toast"
+import { mensajeError } from "@/lib/errores"
 import Link from "next/link"
 
 const MAPEO_VACIO_CMP: MapeoCompania = {
@@ -30,9 +32,15 @@ export default function EditarPlantillaPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const contraparteId = params.id
+  const toast = useToast()
 
   const [contraparte, setContraparte] = useState<{ nombre: string } | null>(null)
   const [plantilla, setPlantilla] = useState<PlantillaProveedor | null>(null)
+  // Distingue "todavía cargando" de "cargó pero no hay plantilla". Sin esto,
+  // una contraparte sin plantilla dejaba `plantilla` en null y la pantalla se
+  // quedaba en "Cargando..." para siempre.
+  const [cargando, setCargando] = useState(true)
+  const [creandoPlantilla, setCreandoPlantilla] = useState(false)
 
   const [muestraCmp, setMuestraCmp] = useState<{ columnas: string[]; filas: Record<string, unknown>[] }>({ columnas: [], filas: [] })
   const [muestraCont, setMuestraCont] = useState<{ columnas: string[]; filas: Record<string, unknown>[] }>({ columnas: [], filas: [] })
@@ -55,6 +63,7 @@ export default function EditarPlantillaPage() {
 
   useEffect(() => {
     async function cargar() {
+      setCargando(true)
       const { data: c } = await supabase.from("contrapartes").select("nombre").eq("id", contraparteId).maybeSingle()
       setContraparte(c)
 
@@ -70,10 +79,43 @@ export default function EditarPlantillaPage() {
           tipos_sin_contraparte_externa: p.tipos_sin_contraparte_externa ?? [],
           config: p.config ?? { tolerancia_importe: 1, moneda_separada: true, ventana_dias_default: 5 },
         })
+      } else {
+        // Cargó pero no hay plantilla: dejamos plantilla en null y salimos del
+        // estado de carga. El render ofrece crearla en vez de colgarse.
+        setPlantilla(null)
       }
+      setCargando(false)
     }
     cargar()
   }, [contraparteId])
+
+  // Crea una plantilla vacía para esta contraparte y la carga en el editor.
+  async function crearPlantilla() {
+    setCreandoPlantilla(true)
+    const { data, error } = await supabase
+      .from("plantillas_proveedor")
+      .insert({ contraparte_id: contraparteId })
+      .select("*")
+      .maybeSingle()
+
+    if (error || !data) {
+      toast.show(mensajeError(error, "No se pudo crear la plantilla"), "error")
+      setCreandoPlantilla(false)
+      return
+    }
+
+    setPlantilla({
+      id: data.id,
+      contraparte_id: data.contraparte_id,
+      mapeo_compania: data.mapeo_compania ?? MAPEO_VACIO_CMP,
+      mapeo_contraparte: data.mapeo_contraparte ?? MAPEO_VACIO_CONT,
+      reglas_tipos: data.reglas_tipos ?? [],
+      tipos_sin_contraparte_compania: data.tipos_sin_contraparte_compania ?? [],
+      tipos_sin_contraparte_externa: data.tipos_sin_contraparte_externa ?? [],
+      config: data.config ?? { tolerancia_importe: 1, moneda_separada: true, ventana_dias_default: 5 },
+    })
+    setCreandoPlantilla(false)
+  }
 
   async function cargarHistorial() {
     setCargandoHist(true)
@@ -327,7 +369,7 @@ export default function EditarPlantillaPage() {
 
     if (error) {
       setGuardando(false)
-      alert("Error al guardar: " + error.message)
+      toast.show(mensajeError(error, "No se pudo guardar la plantilla"), "error")
       return
     }
 
@@ -410,11 +452,56 @@ export default function EditarPlantillaPage() {
     }
 
     setGuardando(false)
-    alert("Plantilla guardada")
+    toast.show("✓ Plantilla guardada", "ok")
   }
 
-  if (!plantilla || !contraparte) {
-    return <div className="text-sm text-ink-400">Cargando...</div>
+  // 1. Todavía cargando.
+  if (cargando) {
+    return <div className="text-sm text-ink-400 px-6 py-16 text-center">Cargando...</div>
+  }
+
+  // 2. La contraparte no existe.
+  if (!contraparte) {
+    return (
+      <div className="px-6 py-16 text-center">
+        <FileWarning size={32} className="mx-auto text-ink-300 mb-3" />
+        <div className="text-base font-semibold">No se encontró la contraparte</div>
+        <Link href="/plantillas" className="btn btn-secondary inline-flex mt-4">
+          <ArrowLeft size={14} /> Volver a cuentas
+        </Link>
+      </div>
+    )
+  }
+
+  // 3. La contraparte existe pero no tiene plantilla: ofrecer crearla en vez de
+  //    quedarse colgado en "Cargando..." (bug anterior).
+  if (!plantilla) {
+    return (
+      <div className="px-6 py-16">
+        <div className="max-w-md mx-auto text-center">
+          <FileWarning size={32} className="mx-auto text-ink-300 mb-3" />
+          <div className="text-base font-semibold">
+            {contraparte.nombre} todavía no tiene una plantilla
+          </div>
+          <p className="text-sm text-ink-500 mt-2 mb-6 leading-relaxed">
+            La plantilla define cómo se leen y concilian los archivos de esta contraparte.
+            Creá una para empezar a configurar el mapeo de columnas y las reglas.
+          </p>
+          <div className="flex items-center gap-2 justify-center">
+            <button
+              onClick={crearPlantilla}
+              disabled={creandoPlantilla}
+              className="btn btn-primary inline-flex disabled:opacity-50"
+            >
+              <Plus size={14} /> {creandoPlantilla ? "Creando…" : "Crear plantilla"}
+            </button>
+            <Link href="/plantillas" className="btn btn-secondary inline-flex">
+              <ArrowLeft size={14} /> Volver
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (

@@ -119,36 +119,34 @@ export default function PlantillasPage() {
 
   async function cargar() {
     setLoading(true)
+    // Antes: 1 query de contrapartes + N queries (una por contraparte) para sus
+    // cuentas = N+1. Ahora traemos las cuentas embebidas en la misma query vía la
+    // FK cuentas_proveedor.contraparte_id -> contrapartes.id. Una sola llamada.
     const { data: contras } = await supabase
       .from("contrapartes")
-      .select("id, nombre, cuit, tipo, categoria, grupo_economico, rubro, es_contraparte, observaciones, activo, conciliador_id, plantillas_proveedor(id), usuarios(nombre)")
+      .select("id, nombre, cuit, tipo, categoria, grupo_economico, rubro, es_contraparte, observaciones, activo, conciliador_id, plantillas_proveedor(id), usuarios(nombre), cuentas_proveedor(id, sociedad_id, cuenta_interna, descripcion, activo, sociedades(nombre))")
       .order("nombre")
 
-    const items: Item[] = []
-    for (const c of contras ?? []) {
-      // Cargar cuentas por sociedad de esta contraparte
-      const { data: cuentas } = await supabase
-        .from("cuentas_proveedor")
-        .select("id, sociedad_id, cuenta_interna, descripcion, activo, sociedades(nombre)")
-        .eq("contraparte_id", c.id)
-        .eq("activo", true)
-        .order("cuenta_interna")
-
-      items.push({
-        id: c.id,
-        nombre: c.nombre,
-        cuit: c.cuit,
-        tipo: c.tipo,
-        categoria: c.categoria,
-        grupo_economico: c.grupo_economico,
-        rubro: c.rubro,
-        es_contraparte: c.es_contraparte ?? false,
-        observaciones: c.observaciones,
-        activo: c.activo ?? true,
-        plantilla_id: (c.plantillas_proveedor as any)?.[0]?.id,
-        conciliador_id: c.conciliador_id ?? null,
-        conciliador_nombre: (c.usuarios as any)?.nombre ?? null,
-        cuentas: (cuentas ?? []).map((cp: any) => ({
+    const items: Item[] = (contras ?? []).map((c: any) => ({
+      id: c.id,
+      nombre: c.nombre,
+      cuit: c.cuit,
+      tipo: c.tipo,
+      categoria: c.categoria,
+      grupo_economico: c.grupo_economico,
+      rubro: c.rubro,
+      es_contraparte: c.es_contraparte ?? false,
+      observaciones: c.observaciones,
+      activo: c.activo ?? true,
+      plantilla_id: (c.plantillas_proveedor as any)?.[0]?.id,
+      conciliador_id: c.conciliador_id ?? null,
+      conciliador_nombre: (c.usuarios as any)?.nombre ?? null,
+      // Filtramos por activo en cliente (el embed trae todas) y ordenamos por
+      // cuenta_interna para conservar el orden que daba el .order() anterior.
+      cuentas: ((c.cuentas_proveedor as any[]) ?? [])
+        .filter((cp: any) => cp.activo)
+        .sort((a: any, b: any) => String(a.cuenta_interna).localeCompare(String(b.cuenta_interna)))
+        .map((cp: any) => ({
           id: cp.id,
           sociedad_id: cp.sociedad_id,
           sociedad_nombre: cp.sociedades?.nombre ?? "—",
@@ -156,8 +154,7 @@ export default function PlantillasPage() {
           descripcion: cp.descripcion,
           activo: cp.activo,
         })),
-      })
-    }
+    }))
     setItems(items)
     setLoading(false)
   }

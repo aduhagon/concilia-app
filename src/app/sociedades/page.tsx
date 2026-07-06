@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic"
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase-client"
 import { useUser } from "@/lib/user-context"
+import { mensajeError } from "@/lib/errores"
 import { Plus, X, Pencil, CheckCircle2, AlertCircle, Building } from "lucide-react"
 
 type Sociedad = {
@@ -122,10 +123,14 @@ export default function SociedadesPage() {
   }
 
   async function toggleActivo(s: Sociedad) {
-    await supabase
+    const { error } = await supabase
       .from("sociedades")
       .update({ activo: !s.activo, updated_at: new Date().toISOString() })
       .eq("id", s.id)
+    if (error) {
+      setResultado({ tipo: "error", msg: mensajeError(error, "No se pudo cambiar el estado de la sociedad") })
+      return
+    }
     if (grupoId) cargar(grupoId)
   }
 

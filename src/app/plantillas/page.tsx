@@ -6,6 +6,8 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase-client"
 import { useUser } from "@/lib/user-context"
+import { useToast } from "@/components/Toast"
+import { mensajeError } from "@/lib/errores"
 import { Plus, Settings, Building2, X, Pencil, Upload, Download, CheckCircle2, Users, Trash2 } from "lucide-react"
 
 type Usuario = { id: string; nombre: string; rol: string }
@@ -74,6 +76,7 @@ const CAT_COLORS: Record<string, string> = {
 
 export default function PlantillasPage() {
   const { usuario } = useUser()
+  const toast = useToast()
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -221,7 +224,12 @@ export default function PlantillasPage() {
 
   async function eliminarCuentaExistente(cuentaId: string, contraparteId: string) {
     if (!confirm("¿Desactivar esta cuenta? Las conciliaciones existentes no se ven afectadas.")) return
-    await supabase.from("cuentas_proveedor").update({ activo: false }).eq("id", cuentaId)
+    const { error } = await supabase.from("cuentas_proveedor").update({ activo: false }).eq("id", cuentaId)
+    if (error) {
+      toast.show(mensajeError(error, "No se pudo desactivar la cuenta"), "error")
+      return
+    }
+    toast.show("Cuenta desactivada", "ok")
     // Refrescar solo este item
     cargar()
   }
@@ -252,8 +260,8 @@ export default function PlantillasPage() {
       .from("contrapartes")
       .update({ conciliador_id: conciliadorMasivo || null, updated_at: new Date().toISOString() })
       .in("id", ids)
-    if (error) { alert("Error al asignar: " + error.message) }
-    else { setSeleccionados(new Set()); setConciliadorMasivo(""); cargar() }
+    if (error) { toast.show(mensajeError(error, "No se pudo asignar el conciliador"), "error") }
+    else { toast.show("Conciliador asignado", "ok"); setSeleccionados(new Set()); setConciliadorMasivo(""); cargar() }
     setAsignando(false)
   }
 
@@ -279,7 +287,7 @@ export default function PlantillasPage() {
 
     if (editando) {
       const { error } = await supabase.from("contrapartes").update(payload).eq("id", editando.id)
-      if (error) { alert("Error al guardar: " + error.message); setGuardando(false); return }
+      if (error) { toast.show(mensajeError(error, "No se pudo guardar los cambios"), "error"); setGuardando(false); return }
 
       // Registrar cambio de categoría
       if (editando.categoria !== form.categoria) {
@@ -294,28 +302,40 @@ export default function PlantillasPage() {
       }
       contraparteId = editando.id
     } else {
-      if (!grupoId) { alert("No se pudo determinar el grupo de trabajo. Recargá la página."); setGuardando(false); return }
+      if (!grupoId) { toast.show("No se pudo determinar el grupo de trabajo. Recargá la página.", "error"); setGuardando(false); return }
       const { data: empresa } = await supabase.from("empresas").select("id").eq("grupo_id", grupoId).limit(1).maybeSingle()
       const { data: nueva, error } = await supabase
         .from("contrapartes")
         .insert({ ...payload, empresa_id: empresa?.id, grupo_id: grupoId })
         .select().single()
-      if (error || !nueva) { alert("Error al crear: " + error?.message); setGuardando(false); return }
+      if (error || !nueva) { toast.show(mensajeError(error, "No se pudo crear la contraparte"), "error"); setGuardando(false); return }
       await supabase.from("plantillas_proveedor").insert({ contraparte_id: nueva.id })
       contraparteId = nueva.id
     }
 
-    // Guardar cuentas nuevas del formulario
+    // Guardar cuentas nuevas del formulario. Acumulamos las que fallen para
+    // avisar: antes, si un insert fallaba, se perdía la cuenta en silencio.
+    let cuentasConError = 0
     if (contraparteId && cuentasForm.length > 0) {
       for (const c of cuentasForm) {
-        await supabase.from("cuentas_proveedor").insert({
+        const { error: errCuenta } = await supabase.from("cuentas_proveedor").insert({
           contraparte_id: contraparteId,
           sociedad_id: c.sociedad_id,
           cuenta_interna: c.cuenta_interna,
           descripcion: c.descripcion || null,
           activo: true,
         })
+        if (errCuenta) cuentasConError++
       }
+    }
+
+    if (cuentasConError > 0) {
+      toast.show(
+        `Se guardó la contraparte, pero ${cuentasConError} de ${cuentasForm.length} cuenta(s) no se pudieron crear. Revisalas.`,
+        "error"
+      )
+    } else {
+      toast.show(editando ? "Cambios guardados" : "Contraparte creada", "ok")
     }
 
     cerrarForm()

@@ -79,15 +79,25 @@ export default function NotificacionesBell() {
   async function marcarLeidas() {
     if (!usuario || noLeidas === 0) return
     const ids = notifs.filter(n => !n.leida).map(n => n.id)
-    await supabase
+    const { error } = await supabase
       .from("notificaciones")
       .update({ leida: true })
       .in("id", ids)
+    // Solo reflejamos en la UI si el update funcionó: antes se marcaba como
+    // leído localmente aunque la DB fallara (la UI mentía).
+    if (error) {
+      console.error("[notificaciones] marcarLeidas:", error.message)
+      return
+    }
     setNotifs(prev => prev.map(n => ({ ...n, leida: true })))
   }
 
   async function marcarUnaLeida(id: string) {
-    await supabase.from("notificaciones").update({ leida: true }).eq("id", id)
+    const { error } = await supabase.from("notificaciones").update({ leida: true }).eq("id", id)
+    if (error) {
+      console.error("[notificaciones] marcarUnaLeida:", error.message)
+      return
+    }
     setNotifs(prev => prev.map(n => n.id === id ? { ...n, leida: true } : n))
   }
 

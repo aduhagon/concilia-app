@@ -11,6 +11,7 @@ import type { AjusteManual, MovimientoResultado, StatusPendiente } from "@/types
 import { STATUS_LABELS } from "@/types"
 import { ArrowLeft, CheckCircle2, AlertCircle, FileSpreadsheet, Calendar, User, Lock, Unlock, ChevronDown, History, Printer, Shield, KeyRound, ArrowRight } from "lucide-react"
 import { useToast } from "@/components/Toast"
+import { mensajeError } from "@/lib/errores"
 
 type Conciliacion = {
   id: string
@@ -332,7 +333,18 @@ export default function DetalleConciliacionPage() {
       }
     }
 
-    await supabase.from("conciliaciones").update(updates).eq("id", c.id)
+    // 1. Update de estado. Es la operación base: si falla, no seguimos —
+    //    nada quedó cambiado, así que abortamos limpio.
+    const { error: errUpdate } = await supabase
+      .from("conciliaciones")
+      .update(updates)
+      .eq("id", c.id)
+
+    if (errUpdate) {
+      toast.show(mensajeError(errUpdate, "No se pudo cambiar el estado de la conciliación"), "error")
+      setAccionando(false)
+      return
+    }
 
     await registrar(supabase, {
       accion: "conciliacion_estado",
@@ -343,26 +355,46 @@ export default function DetalleConciliacionPage() {
       observacion: observacion || undefined,
     })
 
-    await supabase.from("conciliacion_historial").insert({
-      conciliacion_id: c.id,
-      usuario_id: usuarioActual.id,
-      estado_anterior: estadoAnterior,
-      estado_nuevo: accion,
-      accion,
-      observacion: observacion || null,
-    })
+    // 2. Historial de estados (auditoría). El estado ya cambió; si esto falla
+    //    no revertimos, pero avisamos para que quede registro del problema.
+    const { error: errHist } = await supabase
+      .from("conciliacion_historial")
+      .insert({
+        conciliacion_id: c.id,
+        usuario_id: usuarioActual.id,
+        estado_anterior: estadoAnterior,
+        estado_nuevo: accion,
+        accion,
+        observacion: observacion || null,
+      })
 
+    if (errHist) {
+      toast.show("El estado se cambió, pero no se pudo registrar en el historial.", "error")
+    }
+
+    // 3. Firma digital. Es lo MÁS crítico: si el estado ya cambió a cerrado/
+    //    aprobado pero la firma no se guardó, la conciliación queda "firmada"
+    //    sin respaldo. Avisamos de forma explícita y fuerte.
     if (requierePassword && passwordVerified) {
       const hashContenido = await calcularHashConciliacion(c, pendientes)
       const userAgent = navigator.userAgent
-      await supabase.from("firmas_conciliacion").insert({
-        conciliacion_id: c.id,
-        usuario_id: usuarioActual.id,
-        tipo_firma: accion === "cerrado_operativo" ? "cierre_operativo" : "aprobacion_supervisor",
-        hash_contenido: hashContenido,
-        user_agent: userAgent.substring(0, 200),
-        password_verified: true,
-      })
+      const { error: errFirma } = await supabase
+        .from("firmas_conciliacion")
+        .insert({
+          conciliacion_id: c.id,
+          usuario_id: usuarioActual.id,
+          tipo_firma: accion === "cerrado_operativo" ? "cierre_operativo" : "aprobacion_supervisor",
+          hash_contenido: hashContenido,
+          user_agent: userAgent.substring(0, 200),
+          password_verified: true,
+        })
+
+      if (errFirma) {
+        toast.show(
+          "⚠ El estado cambió pero la firma digital NO se guardó. Reabrí y volvé a firmar, o avisá a soporte.",
+          "error"
+        )
+      }
     }
 
     setPassword("")
